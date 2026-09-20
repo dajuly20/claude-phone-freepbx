@@ -113,6 +113,10 @@ async function conversationLoop(endpoint, dialog, callUuid, options, deviceConfi
 
   let session = null;
   let forkRunning = false;
+  let callActive = true;
+
+  const onDialogDestroy = () => { callActive = false; };
+  dialog.on('destroy', onDialogDestroy);
 
   // Get device-specific settings
   const deviceName = deviceConfig ? deviceConfig.name : 'Morpheus';
@@ -147,13 +151,13 @@ async function conversationLoop(endpoint, dialog, callUuid, options, deviceConfi
     let turnCount = 0;
     const MAX_TURNS = 20;
 
-    while (turnCount < MAX_TURNS) {
+    while (turnCount < MAX_TURNS && callActive) {
       turnCount++;
       console.log('[' + new Date().toISOString() + '] CONVERSATION Turn ' + turnCount + '/' + MAX_TURNS);
 
       // READY BEEP
       try {
-        await endpoint.play(READY_BEEP_URL);
+        if (callActive) await endpoint.play(READY_BEEP_URL);
       } catch (e) {
         console.log('[' + new Date().toISOString() + '] BEEP: Ready beep failed, continuing');
       }
@@ -171,15 +175,17 @@ async function conversationLoop(endpoint, dialog, callUuid, options, deviceConfi
 
       session.setCaptureEnabled(false);
 
+      if (!callActive) break;
+
       if (!utterance) {
         const promptUrl = await ttsService.generateSpeech("Ich habe nichts gehört. Bist du noch da?", voiceId);
-        await endpoint.play(promptUrl);
+        if (callActive) await endpoint.play(promptUrl);
         continue;
       }
 
       // GOT-IT BEEP
       try {
-        await endpoint.play(GOTIT_BEEP_URL);
+        if (callActive) await endpoint.play(GOTIT_BEEP_URL);
       } catch (e) {
         console.log('[' + new Date().toISOString() + '] BEEP: Got-it beep failed, continuing');
       }
@@ -194,21 +200,36 @@ async function conversationLoop(endpoint, dialog, callUuid, options, deviceConfi
 
       if (!transcript || transcript.trim().length < 2) {
         const clarifyUrl = await ttsService.generateSpeech("Entschuldigung, das habe ich nicht verstanden. Kannst du das wiederholen?", voiceId);
-        await endpoint.play(clarifyUrl);
+        if (callActive) await endpoint.play(clarifyUrl);
         continue;
       }
 
       if (isGoodbye(transcript)) {
         const byeUrl = await ttsService.generateSpeech("Auf Wiederhören! Ruf gerne jederzeit wieder an.", voiceId);
-        await endpoint.play(byeUrl);
+        if (callActive) await endpoint.play(byeUrl);
         break;
       }
 
       // THINKING FEEDBACK
+      // Capped at 3s: ElevenLabs occasionally "hallucinates" an oversized
+      // clip (10+ seconds) for short filler phrases. Waiting for the full
+      // clip in that case would leave the caller in dead air, so we give up
+      // waiting after 3s and move on (the clip keeps playing in the background).
       const thinkingPhrase = getRandomThinkingPhrase();
       console.log('[' + new Date().toISOString() + '] THINKING: "' + thinkingPhrase + '"');
       const thinkingUrl = await ttsService.generateSpeech(thinkingPhrase, voiceId);
-      await endpoint.play(thinkingUrl);
+      if (callActive) {
+        try {
+          await Promise.race([
+            endpoint.play(thinkingUrl),
+            sleep(3000)
+          ]);
+        } catch (e) {
+          console.log('[' + new Date().toISOString() + '] BEEP: Thinking phrase playback failed, continuing');
+        }
+      }
+
+      if (!callActive) break;
 
       // Hold music in background
       let musicPlaying = false;
@@ -233,17 +254,19 @@ async function conversationLoop(endpoint, dialog, callUuid, options, deviceConfi
 
       console.log('[' + new Date().toISOString() + '] CLAUDE Response received');
 
+      if (!callActive) break;
+
       // Extract and play voice line with device voice
       const voiceLine = extractVoiceLine(claudeResponse);
       console.log('[' + new Date().toISOString() + '] VOICE: "' + voiceLine + '"');
 
       const responseUrl = await ttsService.generateSpeech(voiceLine, voiceId);
-      await endpoint.play(responseUrl);
+      if (callActive) await endpoint.play(responseUrl);
 
       console.log('[' + new Date().toISOString() + '] CONVERSATION Turn ' + turnCount + ' complete');
     }
 
-    if (turnCount >= MAX_TURNS) {
+    if (turnCount >= MAX_TURNS && callActive) {
       const maxUrl = await ttsService.generateSpeech("Wir haben jetzt schon eine Weile gesprochen. Auf Wiederhören!", voiceId);
       await endpoint.play(maxUrl);
     }
@@ -252,8 +275,10 @@ async function conversationLoop(endpoint, dialog, callUuid, options, deviceConfi
     console.error('[' + new Date().toISOString() + '] CONVERSATION Error:', error.message);
     try {
       if (session) session.setCaptureEnabled(false);
-      const errUrl = await ttsService.generateSpeech("Entschuldigung, da ist etwas schiefgelaufen.", voiceId);
-      await endpoint.play(errUrl);
+      if (callActive) {
+        const errUrl = await ttsService.generateSpeech("Entschuldigung, da ist etwas schiefgelaufen.", voiceId);
+        await endpoint.play(errUrl);
+      }
     } catch (e) {}
   } finally {
     console.log('[' + new Date().toISOString() + '] CONVERSATION Cleanup...');

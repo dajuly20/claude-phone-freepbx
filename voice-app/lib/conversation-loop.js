@@ -12,6 +12,7 @@
  * - Hold music during processing
  */
 
+const { setTimeout: sleep } = require('node:timers/promises');
 const logger = require('./logger');
 
 // Audio cue URLs
@@ -340,10 +341,25 @@ async function runConversationLoop(endpoint, dialog, callUuid, options) {
       if (!callActive) break;
 
       // 1. Play random thinking phrase
+      // Capped at 3s: ElevenLabs occasionally "hallucinates" an oversized
+      // clip (10+ seconds) for short filler phrases. Waiting for the full
+      // clip in that case would leave the caller in dead air, so we give up
+      // waiting after 3s and move on (the clip keeps playing in the background).
       const thinkingPhrase = getRandomThinkingPhrase();
       logger.info('Playing thinking phrase', { callUuid, phrase: thinkingPhrase });
       const thinkingUrl = await ttsService.generateSpeech(thinkingPhrase, voiceId);
-      if (callActive) await endpoint.play(thinkingUrl);
+      if (callActive) {
+        try {
+          await Promise.race([
+            endpoint.play(thinkingUrl),
+            sleep(3000)
+          ]);
+        } catch (e) {
+          logger.warn('Thinking phrase playback failed', { callUuid, error: e.message });
+        }
+      }
+
+      if (!callActive) break;
 
       // 2. Start hold music in background
       let musicPlaying = false;

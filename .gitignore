@@ -49,3 +49,12 @@ temp/
 !assets/*.png
 !assets/*.jpg
 voice-app/config/devices.json
+CLAUDE.local.md
+
+# Generated skill install (deployment-specific, from install-skill.sh)
+/Call-skill/
+__pycache__/
+*.pyc
+
+# Demo/scratch files created during voice calls
+claude-api-server/example.md
