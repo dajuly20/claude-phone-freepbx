@@ -254,6 +254,16 @@ function checkReadyState() {
     });
 
     console.log("[" + new Date().toISOString() + "] SIP INVITE handler registered");
+
+    // Answer PBX qualify/keepalive OPTIONS pings with 200 OK. Without this,
+    // drachtio has no handler for OPTIONS and the PBX sees a non-success
+    // response, marks this device's endpoint unreachable, and rejects any
+    // call routed through it (including outbound calls placed via this device).
+    srf.options(function(req, res) {
+      res.send(200);
+    });
+
+    console.log("[" + new Date().toISOString() + "] SIP OPTIONS handler registered");
     console.log("[" + new Date().toISOString() + "] Multi-extension voice interface ready!");
   }
 }

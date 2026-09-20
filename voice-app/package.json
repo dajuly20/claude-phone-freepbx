@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node index.js",
     "dev": "node --watch index.js",
+    "generate:devices": "node scripts/generate-devices-json.js",
     "lint": "cd .. && npm run lint:voice-app",
     "lint:fix": "cd .. && eslint voice-app/ --fix"
   },
