@@ -17,6 +17,7 @@ SKILL_DIR="${CLAUDE_SKILL_DIR:-$HOME/.claude/skills/Call}"
 API_URL=""
 EXTENSION=""
 FORCE=0
+UNINSTALL=0
 
 usage() {
   cat <<EOF
@@ -32,6 +33,7 @@ Options:
                        Auto-detected from voice-app/config/devices.json if omitted.
   --skill-dir PATH     Install location (default: ~/.claude/skills/Call)
   --force              Overwrite an existing installation without prompting
+  --uninstall          Remove the skill from --skill-dir instead of installing
   -h, --help           Show this help
 EOF
 }
@@ -42,10 +44,32 @@ while [[ $# -gt 0 ]]; do
     --extension) EXTENSION="$2"; shift 2 ;;
     --skill-dir) SKILL_DIR="$2"; shift 2 ;;
     --force) FORCE=1; shift ;;
+    --uninstall) UNINSTALL=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1"; usage; exit 1 ;;
   esac
 done
+
+# ----------------------------------------------------------------------------
+# Uninstall
+# ----------------------------------------------------------------------------
+if [[ $UNINSTALL -eq 1 ]]; then
+  if [[ ! -d "$SKILL_DIR" ]]; then
+    echo "Nothing to uninstall - $SKILL_DIR does not exist."
+    exit 0
+  fi
+  if [[ $FORCE -ne 1 ]]; then
+    read -p "Remove the Call skill at $SKILL_DIR? (y/N) " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+      echo "Aborted."
+      exit 1
+    fi
+  fi
+  rm -rf "$SKILL_DIR"
+  echo "✓ Removed $SKILL_DIR"
+  exit 0
+fi
 
 if ! command -v python3 &> /dev/null; then
   echo "✗ python3 is required (the skill's CLI is a Python script) but was not found."
@@ -79,9 +103,25 @@ if [[ -z "$EXTENSION" ]]; then
 fi
 
 # ----------------------------------------------------------------------------
+# Fingerprint this configuration so re-running with unchanged settings is a
+# no-op instead of prompting/overwriting every time.
+# ----------------------------------------------------------------------------
+FINGERPRINT_INPUT="$API_URL|$EXTENSION"
+if [[ -f "$DEVICES_JSON" ]]; then
+  FINGERPRINT_INPUT="$FINGERPRINT_INPUT|$(sha256sum "$DEVICES_JSON" | cut -d' ' -f1)"
+fi
+FINGERPRINT=$(printf '%s' "$FINGERPRINT_INPUT" | sha256sum | cut -d' ' -f1)
+META_FILE="$SKILL_DIR/.install-meta"
+
+# ----------------------------------------------------------------------------
 # Confirm overwrite
 # ----------------------------------------------------------------------------
 if [[ -d "$SKILL_DIR" && $FORCE -ne 1 ]]; then
+  if [[ -f "$META_FILE" && "$(cat "$META_FILE")" == "$FINGERPRINT" ]]; then
+    echo "✓ Already installed at $SKILL_DIR with identical configuration - nothing to do."
+    echo "  Use --force to reinstall anyway, or --uninstall to remove it."
+    exit 0
+  fi
   read -p "Skill already exists at $SKILL_DIR. Overwrite? (y/N) " -n 1 -r
   echo
   if [[ ! $REPLY =~ ^[Yy]$ ]]; then
@@ -632,6 +672,8 @@ print(f"  API_BASE_URL = {api_url}")
 print(f"  Default contact 'me' -> {default_extension}")
 print(f"  Devices: {', '.join(d['name'] for d in devices)}")
 PYEOF
+
+echo "$FINGERPRINT" > "$SKILL_DIR/.install-meta"
 
 echo ""
 echo "════════════════════════════════════════════"
