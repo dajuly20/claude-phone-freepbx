@@ -14,7 +14,7 @@ const ELEVENLABS_API_URL = 'https://api.elevenlabs.io/v1';
 
 // Default voice IDs (can be customized)
 const DEFAULT_VOICE_ID = 'JAgnJveGGUh4qy4kh6dF'; // Morpheus voice
-const MODEL_ID = 'eleven_turbo_v2'; // Fast, low-latency model
+const MODEL_ID = 'eleven_turbo_v2_5'; // Fast, low-latency, multilingual model
 
 // Audio output directory (set via setAudioDir)
 let audioDir = path.join(__dirname, '../audio-temp');

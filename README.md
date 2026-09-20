@@ -223,6 +223,7 @@ npm run lint:fix
 ## Documentation
 
 - [CLI Reference](cli/README.md) - Detailed CLI documentation
+- [Docker Install Guide](docs/INSTALL.md) - Detailed Docker setup, networking modes, and configuration
 - [Troubleshooting](docs/TROUBLESHOOTING.md) - Common issues and solutions
 - [Outbound API](voice-app/README-OUTBOUND.md) - Outbound calling API reference
 - [Deployment](voice-app/DEPLOYMENT.md) - Production deployment guide

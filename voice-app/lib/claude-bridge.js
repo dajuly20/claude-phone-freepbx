@@ -52,18 +52,18 @@ async function query(prompt, options = {}) {
     // AC26: API server unreachable during call - don't crash, return helpful message
     if (error.code === 'ECONNREFUSED' || error.code === 'EHOSTUNREACH' || error.code === 'ENETUNREACH') {
       console.warn(`[${timestamp}] CLAUDE API server unreachable (${error.code})`);
-      return "I'm having trouble connecting to my brain right now. The API server may be offline or unreachable. Please try again later.";
+      return "Ich habe gerade Verbindungsprobleme zu meinem Gehirn. Der API-Server ist eventuell offline. Bitte versuch es später nochmal.";
     }
 
     // AC27: Timeout with helpful error message
     if (error.code === 'ETIMEDOUT' || error.code === 'ECONNABORTED') {
       console.error(`[${timestamp}] CLAUDE Timeout after ${timeout} seconds`);
-      return "I'm sorry, that request took too long. This might mean the API server is slow or there's a network issue. Try asking something simpler, or check that claude-phone api-server is running.";
+      return "Entschuldigung, das hat zu lange gedauert. Vielleicht ist der API-Server langsam oder es gibt ein Netzwerkproblem. Versuch etwas Einfacheres oder prüfe, ob claude-phone api-server läuft.";
     }
 
     console.error(`[${timestamp}] CLAUDE Error:`, error.message);
     // AC26: Don't crash on unknown errors, return friendly message
-    return "I encountered an unexpected error. Please check that the API server is running claude-phone api-server and is on the same network.";
+    return "Es ist ein unerwarteter Fehler aufgetreten. Bitte prüfe, ob claude-phone api-server läuft und im gleichen Netzwerk erreichbar ist.";
   }
 }
 

@@ -48,14 +48,14 @@ function pcmToWav(pcmBuffer, sampleRate = 8000) {
  * @param {Object} options - Transcription options
  * @param {string} options.format - Input format: "wav" or "pcm" (default: "pcm")
  * @param {number} options.sampleRate - Sample rate for PCM (default: 8000)
- * @param {string} options.language - Language code (default: "en")
+ * @param {string} options.language - Language code (default: "de")
  * @returns {Promise<string>} Transcribed text
  */
 async function transcribe(audioBuffer, options = {}) {
   const {
     format = "pcm",
     sampleRate = 8000,
-    language = "en"
+    language = "de"
   } = options;
 
   const client = getOpenAIClient();
