@@ -21,15 +21,39 @@ voice-app/           ← SIP/Audio-Logik
 
 ### Ablauf 900 (Host)
 
-1. `GET <claude_api>/health`: wenn ok, gleich verbinden.
-2. Sonst TCP-Test auf die `probe`-Ports (Standard 22):
+1. Alle `addresses` werden aufgelöst (Hostnamen in alle IPs), und an jeder Adresse wird
+   `GET http://<ip>:<claude_port>/health` geprüft. Die erste, die antwortet, wird genommen.
+   So klappt es beim Laptop über Kabel, WLAN (beides per Fritzbox-DNS) und unterwegs über
+   WireGuard (`192.168.188.201`).
+2. Sonst TCP-Test auf die `probe`-Ports aller Adressen (Standard 22):
    - Rechner an, aber Claude aus: bis `boot_timeout` warten
-   - Rechner aus: fragen, ja/nein per Sprache, dann Magic Packet an `wake.mac` über `wake.broadcast`
+   - Rechner aus: fragen, ja/nein per Sprache, dann Magic Packet an jede MAC in `wake.macs` über `wake.broadcast`
 3. Alle 5 s prüfen, alle 30 s eine Zwischenansage, Wartemusik.
 4. Wenn Claude antwortet: Gespräch mit dem claude-api-server auf dem Rechner.
 
 Auf dem Rechner muss der claude-api-server laufen (Port 3333), z.B. per
 systemd-User-Unit oder `claude-phone api-server`.
+
+## Rückruf: Claude ruft dich an
+
+Die voice-app nimmt auf docker.mrz.ip unter `http://192.168.188.222:3000` Aufträge
+für ausgehende Anrufe an (siehe [voice-app/README-OUTBOUND.md](../voice-app/README-OUTBOUND.md)):
+
+```bash
+curl -X POST http://192.168.188.222:3000/api/outbound-call \
+  -H 'Content-Type: application/json' \
+  -d '{"to": "10", "device": "900", "message": "Backup ist fertig.", "mode": "conversation"}'
+```
+
+- `to`: Nebenstelle, nationale Nummer oder `+49…` (wird zu `0…`; Präfix über `PSTN_DIAL_PREFIX`)
+- `device`: Nebenstelle, von der aus angerufen wird. Sie bestimmt Absender, Stimme und
+  Claude-Instanz für Rückfragen. `900` heißt: Rückfragen beantwortet Claude auf deinem Rechner.
+- `mode`: `announce` sagt nur die Nachricht an, `conversation` lässt danach Rückfragen zu.
+
+Auf deinem Rechner macht das der Call-Skill (`~/.claude/skills/call`), z.B. „ruf mich an,
+wenn der Build durch ist". Er schickt die Anfrage an docker.mrz.ip.
+
+> ⚠ Port 3000 hat keine Authentifizierung. Jeder im LAN kann darüber Anrufe auslösen.
 
 ## Weitere Nebenstelle / weiterer Host
 
@@ -37,10 +61,10 @@ systemd-User-Unit oder `claude-phone api-server`.
 hosts:
   proxmox:
     name: Proxmox
-    address: 192.168.188.10
-    claude_api: http://192.168.188.10:3333
+    addresses: [proxmox.fritz.box, 192.168.188.10]
+    claude_port: 3333
     probe: [22, 8006]
-    wake: { mac: aa:bb:cc:dd:ee:ff, broadcast: 192.168.188.255 }
+    wake: { macs: [aa:bb:cc:dd:ee:ff], broadcast: 192.168.188.255 }
 
 extensions:
   "902":
@@ -77,9 +101,10 @@ docker compose logs -f voice-app
 
 ## Bekannte Einschränkungen
 
-- **Wake-on-LAN** geht nur im selben Netz (192.168.188.0/24) und nur, wenn
-  der Rechner WoL kann. `julian-pc` hängt mit `5c:85:7e:3e:f3:1e` am
-  USB-Ethernet-Adapter: Bei Laptops klappt WoL meist nur am Dock/Netzteil und
-  muss im BIOS aktiviert sein.
+- **Wake-on-LAN** funktioniert nur, wenn der Laptop zu Hause per Kabel dranhängt
+  (Dock oder Onboard-Port), am Netzteil ist und WoL im BIOS aktiviert ist. Per WLAN oder
+  unterwegs kann man ihn nicht wecken. Dann sagt 900 nach dem Wecken irgendwann,
+  dass er nicht hochgekommen ist.
+- Unterwegs ist der Laptop nur erreichbar, wenn der WireGuard-Tunnel `wgprec2026` aktiv ist.
 - Die Vermittlung startet pro Gesprächsrunde einen Claude-Code-Prozess.
   Mit Haiku dauert eine Antwort ein paar Sekunden.

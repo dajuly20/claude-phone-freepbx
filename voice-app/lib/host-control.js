@@ -4,8 +4,37 @@
  */
 
 const dgram = require('dgram');
+const dns = require('dns').promises;
 const net = require('net');
 const axios = require('axios');
+
+/**
+ * All IPs a host may currently have. Laptops change interface (LAN, WLAN,
+ * WireGuard) and DHCP lease, so a host lists several addresses/hostnames and
+ * each hostname is resolved to all of its A records.
+ * Legacy: single "address" + "claude_api" URL.
+ */
+async function candidateAddresses(host) {
+  const entries = [].concat(host.addresses || host.address || []);
+  const result = [];
+  for (const entry of entries) {
+    if (net.isIP(entry)) {
+      result.push(entry);
+      continue;
+    }
+    try {
+      const records = await dns.lookup(entry, { all: true, family: 4 });
+      for (const r of records) result.push(r.address);
+    } catch {
+      // name currently not resolvable (e.g. laptop away from home)
+    }
+  }
+  return [...new Set(result)];
+}
+
+function apiUrlFor(host, address) {
+  return 'http://' + address + ':' + (host.claude_port || 3333);
+}
 
 /**
  * TCP connect test (no ping: containers lack NET_RAW by default)
@@ -20,10 +49,9 @@ function tcpProbe(address, port, timeoutMs = 1500) {
   });
 }
 
-async function claudeApiUp(host) {
-  if (!host.claude_api) return false;
+async function healthy(apiUrl) {
   try {
-    await axios.get(host.claude_api + '/health', { timeout: 2000 });
+    await axios.get(apiUrl + '/health', { timeout: 2000 });
     return true;
   } catch {
     return false;
@@ -31,13 +59,29 @@ async function claudeApiUp(host) {
 }
 
 /**
- * @returns {Promise<'ready'|'up-no-claude'|'down'>}
+ * First claude-api-server URL of this host that answers, or null.
+ */
+async function findClaudeApi(host) {
+  const urls = host.claude_api && !host.addresses
+    ? [host.claude_api]
+    : (await candidateAddresses(host)).map((a) => apiUrlFor(host, a));
+  const results = await Promise.all(urls.map(async (u) => ((await healthy(u)) ? u : null)));
+  return results.find(Boolean) || null;
+}
+
+/**
+ * @returns {Promise<{state: 'ready'|'up-no-claude'|'down', apiUrl: string|null}>}
  */
 async function checkHost(host) {
-  if (await claudeApiUp(host)) return 'ready';
+  const apiUrl = await findClaudeApi(host);
+  if (apiUrl) return { state: 'ready', apiUrl };
+
+  const addresses = await candidateAddresses(host);
   const ports = host.probe || [22];
-  const results = await Promise.all(ports.map((p) => tcpProbe(host.address, p)));
-  return results.some(Boolean) ? 'up-no-claude' : 'down';
+  const probes = [];
+  for (const a of addresses) for (const p of ports) probes.push(tcpProbe(a, p));
+  const results = await Promise.all(probes);
+  return { state: results.some(Boolean) ? 'up-no-claude' : 'down', apiUrl: null };
 }
 
 function sendMagicPacket(mac, broadcast = '255.255.255.255', port = 9) {
@@ -62,11 +106,14 @@ function sendMagicPacket(mac, broadcast = '255.255.255.255', port = 9) {
 }
 
 async function wakeHost(host) {
-  if (!host.wake || !host.wake.mac) throw new Error('No wake config for host');
-  // Send a few packets; WoL is fire-and-forget UDP
+  const macs = [].concat((host.wake && (host.wake.macs || host.wake.mac)) || []);
+  if (macs.length === 0) throw new Error('No wake config for host');
+  // Every NIC that might be plugged in; WoL is fire-and-forget UDP
   for (let i = 0; i < 3; i++) {
-    await sendMagicPacket(host.wake.mac, host.wake.broadcast, host.wake.port || 9);
+    for (const mac of macs) {
+      await sendMagicPacket(mac, host.wake.broadcast, host.wake.port || 9);
+    }
   }
 }
 
-module.exports = { checkHost, claudeApiUp, wakeHost, sendMagicPacket, tcpProbe };
+module.exports = { checkHost, findClaudeApi, candidateAddresses, wakeHost, sendMagicPacket, tcpProbe };

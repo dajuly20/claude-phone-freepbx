@@ -25,17 +25,24 @@ configs:
         voice: ${ELEVENLABS_VOICE_ID}
 
       # ── Rechner ──────────────────────────────────────────────────────────
-      #  claude_api : claude-api-server, der auf dem Rechner selbst läuft
-      #  probe      : TCP-Ports, an denen "Rechner ist an" erkannt wird
-      #  wake       : Wake-on-LAN (Magic Packet per UDP-Broadcast)
+      #  addresses   : alle Wege zum Rechner (IPs oder Hostnamen; Namen werden
+      #                in alle IPs aufgelöst). Die erste Adresse, an der der
+      #                claude-api-server antwortet, wird genommen.
+      #  claude_port : Port des claude-api-servers auf dem Rechner
+      #  probe       : TCP-Ports, an denen "Rechner ist an" erkannt wird
+      #  wake        : Wake-on-LAN (Magic Packet an jede MAC, per UDP-Broadcast)
       hosts:
         julian-pc:
           name: Julians Rechner
-          address: 192.168.188.3
-          claude_api: http://192.168.188.3:3333
+          addresses:
+            - julian-Precision-7560-3000.fritz.box   # Fritzbox-DNS: Kabel + WLAN, egal welche DHCP-IP
+            - 192.168.188.201                        # WireGuard (wgprec2026), wenn unterwegs
+          claude_port: 3333
           probe: [22]
           wake:
-            mac: 5c:85:7e:3e:f3:1e
+            macs:
+              - 5c:85:7e:3e:f3:1e    # USB-/Dock-Ethernet
+              - 08:92:04:46:4e:eb    # Onboard-Ethernet
             broadcast: 192.168.188.255
           boot_timeout: 180
 

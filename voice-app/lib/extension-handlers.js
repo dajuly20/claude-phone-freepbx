@@ -63,20 +63,20 @@ async function handleOperator(call, device, ctx) {
 
 /**
  * Poll until the host's claude-api-server answers.
- * @returns {Promise<boolean>} true when ready
  */
 async function waitForHost(call, host) {
+  // @returns {Promise<string|null>} claude-api-server URL once ready
   const deadline = Date.now() + (host.boot_timeout || 180) * 1000;
   let lastStatus = Date.now();
 
   call.startHoldMusic();
   while (Date.now() < deadline && call.active) {
     await sleep(HOST_POLL_MS);
-    const state = await hostControl.checkHost(host);
+    const { state, apiUrl } = await hostControl.checkHost(host);
     log('HOST ' + host.id + ' state: ' + state);
     if (state === 'ready') {
       await call.stopHoldMusic();
-      return true;
+      return apiUrl;
     }
     if (Date.now() - lastStatus > HOST_STATUS_EVERY_MS) {
       lastStatus = Date.now();
@@ -88,7 +88,7 @@ async function waitForHost(call, host) {
     }
   }
   await call.stopHoldMusic();
-  return false;
+  return null;
 }
 
 /** type: host – check, optionally wake, then talk to the host's Claude */
@@ -96,12 +96,13 @@ async function handleHost(call, device) {
   const host = device.hostConfig;
   const hostName = host.name || host.id;
 
-  const state = await hostControl.checkHost(host);
-  log('HOST ' + host.id + ' initial state: ' + state);
+  let { state, apiUrl } = await hostControl.checkHost(host);
+  log('HOST ' + host.id + ' initial state: ' + state + (apiUrl ? ' (' + apiUrl + ')' : ''));
 
   if (state === 'up-no-claude') {
     await call.say(hostName + ' ist an, aber Claude antwortet dort gerade nicht. Ich warte kurz.');
-    if (!(await waitForHost(call, host))) {
+    apiUrl = await waitForHost(call, host);
+    if (!apiUrl) {
       await call.say('Claude ist auf ' + hostName + ' leider nicht erreichbar. Bitte prüfe den claude-api-server.');
       return;
     }
@@ -132,14 +133,15 @@ async function handleHost(call, device) {
     }
     await call.say('Ich starte ' + hostName + '. Das dauert etwa eine Minute, bleib dran.');
 
-    if (!(await waitForHost(call, host))) {
+    apiUrl = await waitForHost(call, host);
+    if (!apiUrl) {
       await call.say(hostName + ' ist nicht rechtzeitig hochgekommen. Versuch es gleich nochmal.');
       return;
     }
     await call.say(hostName + ' ist jetzt bereit.');
   }
 
-  await call.converse(host.claude_api, {
+  await call.converse(apiUrl, {
     greeting: device.greeting || 'Hier ist Claude auf ' + hostName + '. Was kann ich tun?',
     devicePrompt: device.prompt,
     timeout: device.timeout || 120

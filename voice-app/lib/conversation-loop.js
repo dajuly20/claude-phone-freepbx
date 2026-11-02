@@ -14,6 +14,7 @@
 
 const { setTimeout: sleep } = require('node:timers/promises');
 const logger = require('./logger');
+const hostControl = require('./host-control');
 
 // Audio cue URLs
 const READY_BEEP_URL = 'http://127.0.0.1:3000/static/ready-beep.wav';
@@ -140,6 +141,12 @@ async function runConversationLoop(endpoint, dialog, callUuid, options) {
 
   // Extract devicePrompt and voiceId from deviceConfig (for Cephanie etc)
   const devicePrompt = deviceConfig?.prompt || null;
+  // claude-api-server for this extension (phone book: agent, or whichever
+  // address of the host currently answers); undefined → CLAUDE_API_URL
+  let apiUrl = deviceConfig?.agent || undefined;
+  if (!apiUrl && deviceConfig?.hostConfig) {
+    apiUrl = (await hostControl.findClaudeApi(deviceConfig.hostConfig)) || undefined;
+  }
   const voiceId = deviceConfig?.voiceId || null;  // null = use default Morpheus voice
   let session = null;
   let forkRunning = false;
@@ -177,7 +184,7 @@ async function runConversationLoop(endpoint, dialog, callUuid, options) {
       logger.info('Priming Claude with outbound context (non-blocking)', { callUuid });
       claudeBridge.query(
         `[SYSTEM CONTEXT - DO NOT REPEAT]: You just called the user to tell them: "${initialContext}". They have answered. Now listen to their response and help them.`,
-        { callId: callUuid, devicePrompt: devicePrompt, isSystemPrime: true }
+        { callId: callUuid, devicePrompt: devicePrompt, apiUrl: apiUrl, isSystemPrime: true }
       ).catch(err => logger.warn('Prime query failed', { callUuid, error: err.message }));
     }
 
@@ -374,7 +381,7 @@ async function runConversationLoop(endpoint, dialog, callUuid, options) {
       logger.info('Querying Claude', { callUuid });
       const claudeResponse = await claudeBridge.query(
         transcript,
-        { callId: callUuid, devicePrompt: devicePrompt }
+        { callId: callUuid, devicePrompt: devicePrompt, apiUrl: apiUrl }
       );
 
       // 4. Stop hold music
@@ -449,7 +456,7 @@ async function runConversationLoop(endpoint, dialog, callUuid, options) {
 
     // End Claude session
     try {
-      await claudeBridge.endSession(callUuid);
+      await claudeBridge.endSession(callUuid, apiUrl);
     } catch (e) {
       // Ignore
     }

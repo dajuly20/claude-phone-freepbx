@@ -54,10 +54,20 @@ async function initiateOutboundCall(srf, mediaServer, options) {
 
     // Format SIP URI for 3CX
     // Remove '+' from E.164 format for SIP URI
-    // Internal extensions: dial as-is. External (E.164 with +): add 9 prefix for PSTN
+    // Internal extensions / national numbers: dial as-is.
+    // E.164 (+49...): convert to national (0...) or international (00...) format,
+    // optionally with an outbound route prefix (PSTN_DIAL_PREFIX, e.g. "9" for 3CX)
     const isExternal = to.startsWith('+');
-    const phoneNumber = isExternal ? '9' + to.replace(/^\+1?/, '') : to;
-    const sipTrunkHost = process.env.SIP_TRUNK_HOST || '10.70.7.50';
+    const countryCode = process.env.PSTN_COUNTRY_CODE || '49';
+    const dialPrefix = process.env.PSTN_DIAL_PREFIX || '';
+    let phoneNumber = to;
+    if (isExternal) {
+      phoneNumber = to.startsWith('+' + countryCode)
+        ? '0' + to.slice(countryCode.length + 1)
+        : '00' + to.slice(1);
+      phoneNumber = dialPrefix + phoneNumber;
+    }
+    const sipTrunkHost = process.env.SIP_TRUNK_HOST || process.env.SIP_REGISTRAR || '10.70.7.50';
     const externalIp = process.env.EXTERNAL_IP || '10.70.7.81';
     const defaultCallerId = callerId || process.env.DEFAULT_CALLER_ID || '+15551234567';
 
