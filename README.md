@@ -1,234 +1,322 @@
 <p align="center">
-  <img src="assets/logo.png" alt="Claude Phone" width="200">
+  <img src="assets/logo.png" alt="Claude Phone" width="160">
 </p>
 
-# Claude Phone
+# Claude Phone für FreePBX
 
-Voice interface for Claude Code via SIP/3CX. Call your AI, and your AI can call you.
+Mit Claude telefonieren, über die FreePBX zu Hause. Fork von
+[theNetworkChuck/claude-phone](https://github.com/theNetworkChuck/claude-phone)
+(dessen Original-README liegt unter [docs/UPSTREAM-README.md](docs/UPSTREAM-README.md)).
 
-## What is this?
+Unterschiede zum Original:
 
-Claude Phone gives your Claude Code installation a phone number. You can:
+- **Kein Install-Skript.** Alles steht in `docker-compose.yml`, `.env` und `agents/`.
+- **Telefonbuch in der Compose-Datei.** Pro Nebenstelle steht dort, was sie tut und wo der Anruf landet.
+- **Mehrere Hosts.** Rechner werden geprüft und per Wake-on-LAN geweckt. Laptops mit wechselnden IPs werden unterstützt.
+- **Claude-Agents als Container.** Jeder Agent hat einen eigenen Ordner mit Persönlichkeit und Rechten.
+- **Vermittlung.** Claude nimmt den Anruf an und stellt ihn per SIP-REFER durch.
 
-- **Inbound**: Call an extension and talk to Claude - run commands, check status, ask questions
-- **Outbound**: Your server can call YOU with alerts, then have a conversation about what to do
+---
 
-## Prerequisites
+## Nebenstellen
 
-| Requirement | Where to Get It | Notes |
-|-------------|-----------------|-------|
-| **3CX Cloud Account** | [3cx.com](https://www.3cx.com/) | Free tier works |
-| **ElevenLabs API Key** | [elevenlabs.io](https://elevenlabs.io/) | For text-to-speech |
-| **OpenAI API Key** | [platform.openai.com](https://platform.openai.com/) | For Whisper speech-to-text |
-| **Claude Code CLI** | [claude.ai/code](https://claude.ai/code) | Requires Claude Max subscription |
+| Nr. | Name | Typ | Was passiert |
+|-----|------|-----|--------------|
+| **999** | Vermittlung | `operator` | Claude (Haiku, Container `agent-vermittlung`) fragt, wohin der Anruf soll, und stellt durch |
+| **900** | Julians Rechner | `host` | Prüft den Laptop. Läuft er, landest du bei Claude Code auf dem Laptop. Ist er aus, bietet 900 Wake-on-LAN an |
+| **901** | Netzwerk-Agent | `placeholder` | Sagt im Moment nur „noch nicht eingerichtet“ |
 
-## Platform Support
+## Architektur
 
-| Platform | Status |
-|----------|--------|
-| **macOS** | Fully supported |
-| **Linux** | Fully supported (including Raspberry Pi) |
-| **Windows** | Not supported (may work with WSL) |
+```mermaid
+flowchart LR
+    phone(["☎ SNOM / Handy"])
+    pbx["FreePBX<br/>pbx.mrz.ip<br/>192.168.188.42"]
 
-## Quick Start
+    subgraph docker["docker.mrz.ip · 192.168.188.222 · docker compose"]
+        drachtio["drachtio<br/>SIP :5060"]
+        fs["FreeSWITCH<br/>RTP 30000-30100"]
+        voice["voice-app<br/>Telefonbuch · Logik<br/>API :3000"]
+        vermittlung["agent-vermittlung<br/>Claude Haiku<br/>127.0.0.1:3401"]
+        netzwerk["agent-netzwerk<br/>(später)<br/>127.0.0.1:3402"]
+    end
 
-### 1. Install
+    subgraph laptop["Julians Laptop · Kabel / WLAN / WireGuard"]
+        api["claude-api-server<br/>:3333"]
+        cc["Claude Code CLI"]
+    end
+
+    cloud["OpenAI Whisper (STT)<br/>ElevenLabs (TTS)"]
+
+    phone <--> pbx
+    pbx <-- "SIP, registriert 999/900/901" --> drachtio
+    pbx <-- RTP --> fs
+    drachtio --- voice
+    fs --- voice
+    voice -- "999" --> vermittlung
+    voice -. "901" .-> netzwerk
+    voice -- "900: health / WoL" --> api
+    api --> cc
+    voice <--> cloud
+```
+
+Was läuft wo:
+
+| Host | Was läuft | Wie gestartet |
+|------|-----------|---------------|
+| **docker.mrz.ip** | drachtio, FreeSWITCH, voice-app, agent-vermittlung | `docker compose up -d` in `~/docker/claude-phone-freepbx` |
+| **Laptop** | nur `claude-api-server` auf Port 3333 | `node claude-api-server/server.js` (siehe [Laptop vorbereiten](#5-laptop-vorbereiten-für-900)) |
+| **pbx.mrz.ip** | FreePBX, Nebenstellen 999/900/901 als PJSIP | Skill `freepbx-extension` |
+
+### Ablauf 999 – Vermittlung
+
+```mermaid
+sequenceDiagram
+    actor A as Anrufer
+    participant V as voice-app
+    participant C as agent-vermittlung
+    participant P as FreePBX
+    A->>V: wählt 999
+    V->>A: „Vermittlung, wohin darf ich verbinden?“
+    A->>V: „Zu meinem Rechner“
+    V->>C: Text + Telefonbuch
+    C-->>V: „Ich verbinde zu Julians Rechner“ + 🔀 TRANSFER: 900
+    V->>A: Ansage
+    V->>P: SIP REFER → 900
+    P->>A: verbunden mit 900
+```
+
+### Ablauf 900 – Host prüfen und wecken
+
+```mermaid
+flowchart TD
+    start([Anruf auf 900]) --> resolve["Alle addresses auflösen<br/>fritz.box-Name → Kabel- und WLAN-IP<br/>+ WireGuard 192.168.188.201"]
+    resolve --> health{"GET :3333/health<br/>an irgendeiner IP?"}
+    health -- ja --> talk["Gespräch mit Claude Code<br/>auf dem Laptop"]
+    health -- nein --> probe{"TCP-Port 22<br/>erreichbar?"}
+    probe -- "ja: Rechner an,<br/>Claude aus" --> wait
+    probe -- nein --> ask{"„Soll ich ihn starten?“"}
+    ask -- nein --> bye([Auflegen])
+    ask -- ja --> wol["Magic Packet an alle MACs<br/>Broadcast 192.168.188.255"]
+    wol --> wait["Alle 5 s prüfen<br/>Wartemusik, alle 30 s Ansage"]
+    wait -- "Claude antwortet" --> talk
+    wait -- "nach boot_timeout (180 s)" --> fail([„Er ist nicht hochgekommen“])
+```
+
+### Rückruf – Claude ruft dich an
+
+```mermaid
+sequenceDiagram
+    participant S as Skript / Claude-Skill
+    participant V as voice-app :3000
+    participant P as FreePBX
+    actor J as Julian
+    S->>V: POST /api/outbound-call {to, device, message, mode}
+    V->>P: INVITE (als Nebenstelle "device")
+    P->>J: klingelt
+    J-->>V: nimmt ab
+    V->>J: Nachricht (TTS)
+    opt mode = conversation
+        J->>V: Rückfrage
+        V->>V: Claude des Geräts fragen (z.B. 900 → Laptop)
+        V->>J: Antwort
+    end
+```
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/theNetworkChuck/claude-phone/main/install.sh | bash
+curl -X POST http://192.168.188.222:3000/api/outbound-call \
+  -H 'Content-Type: application/json' \
+  -d '{"to": "10", "device": "900", "message": "Backup ist fertig.", "mode": "announce"}'
 ```
 
-The installer will:
-- Check for Node.js 18+, Docker, and git (offers to install if missing)
-- Clone the repository to `~/.claude-phone-cli`
-- Install dependencies
-- Create the `claude-phone` command
+---
 
-### 2. Setup
+## Einrichtung Schritt für Schritt
+
+Verzeichnisse:
+
+| Wo | Pfad | Wozu |
+|----|------|------|
+| Laptop | `~/BashScripts/claudeProjects/ClaudePhoneFreePbx` | hier entwickeln, committen, pushen |
+| docker.mrz.ip | `~/docker/claude-phone-freepbx` | hier läuft der Stack, nur `git pull` |
+
+> `~/docker` auf docker.mrz.ip ist der Clone von `home-docker-stacks`.
+> `claude-phone-freepbx` liegt darin als **eigener Git-Clone** (dajuly20/claude-phone-freepbx)
+> und gehört nicht zum home-docker-stacks-Repo. Portainer brauchst du dafür nicht.
+
+### 1. Nebenstellen in FreePBX ✅
+
+Erledigt: 999, 900 und 901 sind angelegt, ihre Secrets stehen in der `.env`.
+Neue Nebenstellen legt der Skill an:
 
 ```bash
-claude-phone setup
+~/.claude/skills/freepbx-extension/freepbx-ext.sh 902 'Proxmox'
+# PBX sperrt die eigene IP? Dann über den Docker-Host:
+~/.claude/skills/freepbx-extension/freepbx-ext.sh --jump julian@docker.mrz.ip 902 'Proxmox'
 ```
 
-The setup wizard asks what you're installing:
+### 2. Claude-Token erzeugen (Laptop)
 
-| Type | Use Case | What It Configures |
-|------|----------|-------------------|
-| **Voice Server** | Pi or dedicated voice box | Docker containers, connects to remote API server |
-| **API Server** | Mac/Linux with Claude Code | Just the Claude API wrapper |
-| **Both** | All-in-one single machine | Everything on one box |
-
-### 3. Start
+Den Token brauchen die Agent-Container (999, später 901). Er läuft über dein Claude-Abo.
 
 ```bash
-claude-phone start
+claude setup-token
 ```
 
-## Deployment Modes
+Es öffnet sich ein Browser-Login. Danach gibt der Befehl einen langen Token aus,
+der mit `sk-ant-oat…` beginnt. Kopieren.
 
-### All-in-One (Single Machine)
-
-Best for: Mac or Linux server that's always on and has Claude Code installed.
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Your Phone                                                  │
-│      │                                                       │
-│      ↓ Call extension 9000                                  │
-│  ┌─────────────┐                                            │
-│  │     3CX     │  ← Cloud PBX                               │
-│  └──────┬──────┘                                            │
-│         │                                                    │
-│         ↓                                                    │
-│  ┌─────────────────────────────────────────────┐           │
-│  │     Single Server (Mac/Linux)                │           │
-│  │  ┌───────────┐    ┌───────────────────┐    │           │
-│  │  │ voice-app │ ←→ │ claude-api-server │    │           │
-│  │  │ (Docker)  │    │ (Claude Code CLI) │    │           │
-│  │  └───────────┘    └───────────────────┘    │           │
-│  └─────────────────────────────────────────────┘           │
-└─────────────────────────────────────────────────────────────┘
-```
-
-**Setup:**
-```bash
-claude-phone setup    # Select "Both"
-claude-phone start    # Launches Docker + API server
-```
-
-### Split Mode (Pi + API Server)
-
-Best for: Dedicated Pi for voice services, Claude running on your main machine.
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Your Phone                                                  │
-│      │                                                       │
-│      ↓ Call extension 9000                                  │
-│  ┌─────────────┐                                            │
-│  │     3CX     │  ← Cloud PBX                               │
-│  └──────┬──────┘                                            │
-│         │                                                    │
-│         ↓                                                    │
-│  ┌─────────────┐         ┌─────────────────────┐           │
-│  │ Raspberry Pi │   ←→   │ Mac/Linux with      │           │
-│  │ (voice-app)  │  HTTP  │ Claude Code CLI     │           │
-│  └─────────────┘         │ (claude-api-server) │           │
-│                          └─────────────────────┘           │
-└─────────────────────────────────────────────────────────────┘
-```
-
-**On your Pi (Voice Server):**
-```bash
-claude-phone setup    # Select "Voice Server", enter API server IP when prompted
-claude-phone start    # Launches Docker containers
-```
-
-**On your Mac/Linux (API Server):**
-```bash
-claude-phone api-server    # Starts Claude API wrapper on port 3333
-```
-
-Note: On the API server machine, you don't need to run `claude-phone setup` first - the `api-server` command works standalone.
-
-## CLI Commands
-
-| Command | Description |
-|---------|-------------|
-| `claude-phone setup` | Interactive configuration wizard |
-| `claude-phone start` | Start services based on installation type |
-| `claude-phone stop` | Stop all services |
-| `claude-phone status` | Show service status |
-| `claude-phone doctor` | Health check for dependencies and services |
-| `claude-phone api-server [--port N]` | Start API server standalone (default: 3333) |
-| `claude-phone device add` | Add a new device/extension |
-| `claude-phone device list` | List configured devices |
-| `claude-phone device remove <name>` | Remove a device |
-| `claude-phone logs [service]` | Tail logs (voice-app, drachtio, freeswitch) |
-| `claude-phone config show` | Display configuration (secrets redacted) |
-| `claude-phone config path` | Show config file location |
-| `claude-phone config reset` | Reset configuration |
-| `claude-phone backup` | Create configuration backup |
-| `claude-phone restore` | Restore from backup |
-| `claude-phone update` | Update Claude Phone |
-| `claude-phone uninstall` | Complete removal |
-
-## Device Personalities
-
-Each SIP extension can have its own identity with a unique name, voice, and personality prompt:
+### 3. Token in die `.env` auf docker.mrz.ip
 
 ```bash
-claude-phone device add
+ssh docker.mrz.ip
+cd ~/docker/claude-phone-freepbx
+nano .env          # Zeile  CLAUDE_CODE_OAUTH_TOKEN=  → Token dahinter einfügen
 ```
 
-Example devices:
-- **Morpheus** (ext 9000) - General assistant
-- **Cephanie** (ext 9002) - Storage monitoring bot
-
-## API Endpoints
-
-The voice-app exposes these endpoints on port 3000:
-
-| Method | Endpoint | Purpose |
-|--------|----------|---------|
-| POST | `/api/outbound-call` | Initiate an outbound call |
-| GET | `/api/call/:callId` | Get call status |
-| GET | `/api/calls` | List active calls |
-| POST | `/api/query` | Query a device programmatically |
-| GET | `/api/devices` | List configured devices |
-
-See [Outbound API Reference](voice-app/README-OUTBOUND.md) for details.
-
-## Troubleshooting
-
-### Quick Diagnostics
+Kontrolle, ohne den Token anzuzeigen:
 
 ```bash
-claude-phone doctor    # Automated health checks
-claude-phone status    # Service status
-claude-phone logs      # View logs
+grep -c '^CLAUDE_CODE_OAUTH_TOKEN=sk-ant-' .env     # muss 1 ausgeben
+docker compose config -q && echo "Compose ok"
 ```
 
-### Common Issues
-
-| Problem | Likely Cause | Solution |
-|---------|--------------|----------|
-| Calls connect but no audio | Wrong external IP | Re-run `claude-phone setup`, verify LAN IP |
-| Extension not registering | 3CX SBC not running | Check 3CX admin panel |
-| "Sorry, something went wrong" | API server unreachable | Check `claude-phone status` |
-| Port conflict on startup | 3CX SBC using port 5060 | Setup auto-detects this; re-run setup |
-
-See [Troubleshooting Guide](docs/TROUBLESHOOTING.md) for more.
-
-## Configuration
-
-Configuration is stored in `~/.claude-phone/config.json` with restricted permissions (chmod 600).
+### 4. Stack starten (docker.mrz.ip)
 
 ```bash
-claude-phone config show    # View config (secrets redacted)
-claude-phone config path    # Show file location
+cd ~/docker/claude-phone-freepbx
+git pull                          # neuesten Stand holen
+docker compose up -d --build      # beim ersten Mal dauert der Build ein paar Minuten
+docker compose ps                 # alle 4 Services "running"?
+docker compose logs -f voice-app  # Strg+C beendet nur das Mitlesen
 ```
 
-## Development
+Im Log der voice-app sollte bei jeder Nebenstelle eine erfolgreiche Registrierung stehen,
+`[REGISTRAR] SUCCESS - Registered as extension 999` (dasselbe für 900 und 901). In FreePBX unter *Reports → Asterisk Info → Peers*
+oder auf der PBX mit `sudo asterisk -rx 'pjsip show contacts'` müssen die drei
+mit `192.168.188.222` auftauchen.
+
+Testen:
+
+| Test | Erwartung |
+|------|-----------|
+| 901 anrufen | „Der Netzwerk-Agent ist noch nicht eingerichtet“ |
+| 999 anrufen, „verbinde mich mit 901“ | Ansage, danach landest du auf 901 |
+| 900 anrufen (Laptop-API aus) | „Soll ich ihn starten?“ |
+| `curl http://192.168.188.222:3000/api/devices` | Liste der Nebenstellen |
+
+Agent einzeln prüfen:
 
 ```bash
-# Run tests
-npm test
+curl -s http://127.0.0.1:3401/health
+docker compose logs agent-vermittlung
+```
 
-# Lint
+### 5. Laptop vorbereiten (für 900)
+
+Auf dem Laptop läuft nur der `claude-api-server`. Für einen ersten Test reicht:
+
+```bash
+cd ~/BashScripts/claudeProjects/ClaudePhoneFreePbx/claude-api-server
+npm install
+CLAUDE_WORKDIR=$HOME node server.js
+```
+
+Damit er dauerhaft läuft, eine systemd-User-Unit
+`~/.config/systemd/user/claude-api-server.service`:
+
+```ini
+[Unit]
+Description=Claude API Server (Claude Phone, Nebenstelle 900)
+After=network-online.target
+
+[Service]
+WorkingDirectory=%h/BashScripts/claudeProjects/ClaudePhoneFreePbx/claude-api-server
+Environment=CLAUDE_WORKDIR=%h
+ExecStart=/usr/bin/env node server.js
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now claude-api-server
+loginctl enable-linger $USER     # läuft auch ohne angemeldete Sitzung
+```
+
+> ⚠ Wer Port 3333 erreicht, kann Claude Code mit `--dangerously-skip-permissions`
+> auf dem Laptop steuern. Freigeben also nur fürs Heimnetz und für WireGuard.
+
+**Wake-on-LAN** geht nur per Kabel (Dock oder Onboard), wenn der Laptop am Netzteil hängt
+und WoL im BIOS aktiviert ist. Unter Linux zusätzlich:
+
+```bash
+sudo ethtool -s <interface> wol g
+```
+
+### 6. Rückruf-Skill (Laptop)
+
+`~/.claude/skills/call/lib/api.py` zeigt schon auf `http://192.168.188.222:3000`.
+Was noch fehlt: deine eigene Nummer als Kontakt „me“, damit „ruf mich an“ funktioniert.
+
+---
+
+## Konfiguration ändern
+
+| Was | Wo | Danach |
+|-----|----|--------|
+| Nebenstelle hinzufügen/ändern | `docker-compose.yml` → `configs.telefonbuch.extensions` | `docker compose up -d` |
+| Host hinzufügen | `docker-compose.yml` → `hosts` | `docker compose up -d` |
+| Persönlichkeit/Rechte eines Agents | `agents/<name>/CLAUDE.md`, `.claude/settings.json` | `docker compose restart agent-<name>` |
+| Neuer Agent | Ordner `agents/<name>/` + Service `agent-<name>` | `docker compose up -d --build` |
+| Secrets | `.env` | `docker compose up -d` |
+
+Details zu allen Feldern stehen in [docs/NEBENSTELLEN.md](docs/NEBENSTELLEN.md).
+Zu den Agents siehe [agents/README.md](agents/README.md).
+
+Workflow: am Laptop ändern → `git push` → auf docker.mrz.ip `git pull && docker compose up -d --build`.
+
+---
+
+## Ideen für später
+
+**Agents und Nebenstellen**
+- **901 Netzwerk-Agent:** darf `nmap`, `ping`, `fping` und `scripts/network_audit.py`. Anfragen wie „Welche Geräte sind neu im Netz?“ oder „Ist der Proxmox erreichbar?“
+- **902 Proxmox:** VM-Status und Backups abfragen, eine VM starten. Lesender API-Token, Schreibrechte nur für ausgewählte Befehle.
+- **903 Home Assistant:** „Mach das Licht im Büro aus“ oder „Wie warm ist es draußen?“ über die HA-REST-API (der Token ist schon für den Alexa-Sync da).
+- **904 TODO-Diktat:** Was du sagst, landet in `TODO.md` oder Todoist. Gegenstück zum Alexa-Sync.
+- **Vermittlung mit Gedächtnis:** „wie letztes Mal“ verbindet mit der zuletzt gewählten Nebenstelle. Dazu Anrufer-Erkennung über die Caller-ID.
+
+**Rückrufe und Alarme**
+- **Monitoring ruft an:** Uptime Kuma, Proxmox-Backup-Fehler oder ein volles Storage-Box-Mount lösen `POST /api/outbound-call` aus. Mit `mode: conversation` kannst du direkt fragen „Was genau ist kaputt?“
+- **Eskalation:** erst Push-Nachricht, nach 10 Minuten ohne Reaktion Anruf.
+- **Ruhezeiten:** nachts nur Alarme mit Priorität „kritisch“.
+
+**Telefonbuch und Telefone**
+- **Google-Kontakte → SNOM:** ein kleiner Dienst (People API oder CardDAV), der ein Snom-XML-Telefonbuch bereitstellt oder den FreePBX Contact Manager befüllt. Dieselben Kontakte kennt dann auch die Vermittlung („verbinde mich mit Mama“).
+- **Externe Ziele für 999:** Handynummern unter `directory:` eintragen und über den Trunk vermitteln.
+
+**Sicherheit und Betrieb**
+- **API-Schlüssel für Port 3000:** Im Moment kann jeder im LAN Anrufe auslösen.
+- **PIN für 900:** vor dem Zugriff auf Claude Code mit vollen Rechten eine Ziffernfolge abfragen (DTMF).
+- **Laptop-API nur für docker.mrz.ip:** Firewall-Regel auf dem Laptop, die Port 3333 nur für 192.168.188.222 freigibt.
+- **Healthcheck und Restart:** `healthcheck:` für voice-app und Agents in der Compose-Datei, Status in Uptime Kuma.
+- **Kosten im Blick:** Whisper- und ElevenLabs-Minuten pro Anruf loggen.
+
+**Sprache**
+- **Lokale STT/TTS:** whisper.cpp oder faster-whisper und Piper auf docker.mrz.ip, dann ohne Cloud-Kosten.
+- **Unterbrechen (Barge-in):** dazwischenreden, während Claude spricht.
+
+---
+
+## Entwicklung
+
+```bash
+npm install
+npm test          # alle Tests
 npm run lint
-npm run lint:fix
 ```
 
-## Documentation
-
-- [CLI Reference](cli/README.md) - Detailed CLI documentation
-- [Docker Install Guide](docs/INSTALL.md) - Detailed Docker setup, networking modes, and configuration
-- [Troubleshooting](docs/TROUBLESHOOTING.md) - Common issues and solutions
-- [Outbound API](voice-app/README-OUTBOUND.md) - Outbound calling API reference
-- [Deployment](voice-app/DEPLOYMENT.md) - Production deployment guide
-- [Claude Code Skill](docs/CLAUDE-CODE-SKILL.md) - Build a "call me" skill for Claude Code
-
-## License
-
-MIT
+Technische Details zum Code: [CLAUDE.md](CLAUDE.md) · Fehlersuche: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
