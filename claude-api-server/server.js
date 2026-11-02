@@ -169,6 +169,8 @@ function runClaudeOnce({ fullPrompt, callId, timestamp }) {
     const claude = spawn('claude', args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       shell: false,
+      // Agent folder (CLAUDE.md, .claude/settings.json) when run as container
+      cwd: process.env.CLAUDE_WORKDIR || process.cwd(),
       env: claudeEnv
     });
 

@@ -1,29 +1,94 @@
-version: '3.8'
+# ============================================================================
+#  Claude Phone für FreePBX  –  läuft auf docker.mrz.ip
+# ============================================================================
+#
+#  Start:   cp .env.example .env   (Passwörter/Keys eintragen)
+#           docker compose up -d --build
+#
+#  Aufbau:
+#    1. TELEFONBUCH (configs.telefonbuch)  → welche Nebenstelle macht was
+#    2. HOSTS       (im Telefonbuch)       → Rechner, die geprüft/geweckt werden
+#    3. AGENTS      (./agents/<name>/)     → Eigenschaften der Claude-Instanzen
+#
+#  Neue Nebenstelle:  Eintrag unter "extensions:" + Passwort in .env,
+#                     gleiche Nebenstelle in FreePBX als PJSIP-Extension anlegen,
+#                     dann: docker compose up -d
+#  Neuer Agent:       Ordner agents/<name>/ anlegen + Service "agent-<name>"
+#                     nach Vorlage von agent-vermittlung unten.
+# ============================================================================
 
-# CRITICAL: All containers must use network_mode: host
-# Docker bridge networking causes FreeSWITCH to advertise internal IPs
-# in SDP, making RTP unreachable from external callers.
+configs:
+  telefonbuch:
+    content: |
+      defaults:
+        sip_domain: ${SIP_DOMAIN:-pbx.mrz.ip}
+        voice: ${ELEVENLABS_VOICE_ID}
+
+      # ── Rechner ──────────────────────────────────────────────────────────
+      #  claude_api : claude-api-server, der auf dem Rechner selbst läuft
+      #  probe      : TCP-Ports, an denen "Rechner ist an" erkannt wird
+      #  wake       : Wake-on-LAN (Magic Packet per UDP-Broadcast)
+      hosts:
+        julian-pc:
+          name: Julians Rechner
+          address: 192.168.188.3
+          claude_api: http://192.168.188.3:3333
+          probe: [22]
+          wake:
+            mac: 5c:85:7e:3e:f3:1e
+            broadcast: 192.168.188.255
+          boot_timeout: 180
+
+      # ── Nebenstellen ─────────────────────────────────────────────────────
+      #  type: operator    → Claude-Vermittlung, stellt per SIP-REFER durch
+      #        host        → Rechner prüfen, ggf. wecken, dann dessen Claude
+      #        claude      → direkt mit einer Claude-Instanz (agent: URL)
+      #        placeholder → spricht "message" und legt auf
+      extensions:
+        "999":
+          name: Vermittlung
+          type: operator
+          agent: http://127.0.0.1:3401          # → Service agent-vermittlung
+          password: ${EXT_999_PASSWORD}
+          description: Vermittlung, verbindet zu allen anderen Nebenstellen
+
+        "900":
+          name: Julians Rechner
+          type: host
+          host: julian-pc
+          password: ${EXT_900_PASSWORD}
+          description: Claude Code auf Julians Rechner. Weckt den Rechner bei Bedarf.
+
+        "901":
+          name: Netzwerk-Agent
+          type: placeholder
+          password: ${EXT_901_PASSWORD}
+          description: Netzwerk-Agent (noch nicht eingerichtet)
+          message: Der Netzwerk-Agent ist noch nicht eingerichtet. Bis bald!
+          # später:  type: claude
+          #          agent: http://127.0.0.1:3402   (→ Service agent-netzwerk)
+
+      # ── Weitere Ziele für die Vermittlung (normale Telefone etc.) ───────
+      #  Werden nicht registriert, nur von 999 als Durchstell-Ziel genannt.
+      directory: {}
+        # "10": Julians Handy
 
 services:
+  # ── SIP / Media (Host-Netz zwingend, sonst kein RTP-Audio) ─────────────
   drachtio:
     image: drachtio/drachtio-server:latest
-    container_name: drachtio
     restart: unless-stopped
     network_mode: host
     command: >
       drachtio
-      --contact "sip:*:5060;transport=tcp,udp"
+      --contact "sip:*:${DRACHTIO_SIP_PORT:-5060};transport=tcp,udp"
       --external-ip ${EXTERNAL_IP}
       --secret ${DRACHTIO_SECRET:-cymru}
       --port 9022
       --loglevel info
-    # Ports (for reference - host mode doesn't need port mapping):
-    # - 5060: SIP UDP/TCP
-    # - 9022: Admin/App Port
 
   freeswitch:
     image: drachtio/drachtio-freeswitch-mrf:latest
-    container_name: freeswitch
     restart: unless-stopped
     network_mode: host
     command: >
@@ -34,31 +99,50 @@ services:
       --ext-rtp-ip ${EXTERNAL_IP}
       --ext-sip-ip ${EXTERNAL_IP}
       --advertise-external-ip
-    environment:
-      # CRITICAL: Set this to your server's LAN IP
-      # This IP goes into SDP packets so 3CX knows where to send audio
-      # Note: drachtio-freeswitch-mrf only accepts CLI flags, not env vars
-      - EXTERNAL_IP=${EXTERNAL_IP}
-    # Ports (for reference):
-    # - 8021: ESL (Event Socket Library)
-    # - 5080: Internal SIP
-    # - 30000-30100: RTP Audio (changed from 20000-20100 to avoid conflict with 3CX SBC)
 
   voice-app:
     build: ./voice-app
-    container_name: voice-app
     restart: unless-stopped
-    network_mode: host
-    env_file:
-      - .env
+    network_mode: host          # auch nötig für Wake-on-LAN-Broadcast
+    env_file: .env
+    environment:
+      DRACHTIO_HOST: 127.0.0.1
+      FREESWITCH_HOST: 127.0.0.1
+      EXTENSIONS_CONFIG: /app/config/extensions.yml
+      SIP_REGISTRAR: ${SIP_REGISTRAR}
+    configs:
+      - source: telefonbuch
+        target: /app/config/extensions.yml
     volumes:
-      # Audio files directory for TTS playback
-      - ./voice-app/audio:/app/audio
-      # Device configurations
-      - ./voice-app/config:/app/config
-    depends_on:
-      - drachtio
-      - freeswitch
-    # Ports (for reference):
-    # - 3000: HTTP API
-    # - 3001: WebSocket for audio streaming
+      - audio:/app/audio
+    depends_on: [drachtio, freeswitch]
+
+  # ── Claude-Instanzen ────────────────────────────────────────────────────
+  #  Jede Instanz = ein Ordner unter ./agents/ (CLAUDE.md = Persönlichkeit,
+  #  .claude/settings.json = Rechte). Port nur lokal für die voice-app.
+  agent-vermittlung:
+    build:
+      context: .
+      dockerfile: claude-agent/Dockerfile
+    restart: unless-stopped
+    environment:
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN}
+      CLAUDE_MODEL: claude-haiku-5-5     # schnell genug fürs Durchstellen
+    volumes:
+      - ./agents/vermittlung:/agent:ro
+    ports:
+      - "127.0.0.1:3401:3333"
+
+  # agent-netzwerk:                      # für 901, später
+  #   build: { context: ., dockerfile: claude-agent/Dockerfile }
+  #   restart: unless-stopped
+  #   environment:
+  #     CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN}
+  #     CLAUDE_MODEL: claude-sonnet-5-5
+  #   volumes:
+  #     - ./agents/netzwerk:/agent
+  #   ports:
+  #     - "127.0.0.1:3402:3333"
+
+volumes:
+  audio:

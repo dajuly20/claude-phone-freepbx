@@ -16,6 +16,7 @@
 const fs = require('fs');
 const path = require('path');
 const logger = require('./logger');
+const extensionConfig = require('./extension-config');
 
 const CONFIG_PATH = path.join(__dirname, '../config/devices.json');
 
@@ -33,6 +34,7 @@ class DeviceRegistry {
   constructor() {
     this.devices = {};
     this.devicesByName = {};
+    this.directory = {};
     this.loaded = false;
     this.load();
   }
@@ -42,6 +44,19 @@ class DeviceRegistry {
    */
   load() {
     try {
+      // Preferred: phone book from docker-compose.yml (configs.telefonbuch)
+      if (extensionConfig.exists()) {
+        const book = extensionConfig.load();
+        this.devices = book.devices;
+        this.directory = book.directory;
+        this.devicesByName = {};
+        for (const device of Object.values(this.devices)) {
+          this.devicesByName[device.name.toLowerCase()] = device;
+        }
+        this.loaded = true;
+        return;
+      }
+
       if (!fs.existsSync(CONFIG_PATH)) {
         logger.warn('Device config not found, using Morpheus default only', {
           path: CONFIG_PATH
@@ -126,6 +141,11 @@ class DeviceRegistry {
 
   getAllDevices() {
     return { ...this.devices };
+  }
+
+  /** Extra transfer targets for the operator (not registered) */
+  getDirectory() {
+    return { ...this.directory };
   }
 
   getDefault() {

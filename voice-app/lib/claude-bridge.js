@@ -14,14 +14,15 @@ const CLAUDE_API_URL = process.env.CLAUDE_API_URL || 'http://localhost:3333';
  * @param {string} options.callId - Call UUID for maintaining conversation context
  * @param {string} options.devicePrompt - Device-specific personality prompt
  * @param {number} options.timeout - Timeout in seconds (default: 30, AC27)
+ * @param {string} options.apiUrl - claude-api-server to use (per extension)
  * @returns {Promise<string>} Claude's response
  */
 async function query(prompt, options = {}) {
-  const { callId, devicePrompt, timeout = 30 } = options; // AC27: Default 30s timeout
+  const { callId, devicePrompt, timeout = 30, apiUrl = CLAUDE_API_URL } = options; // AC27: Default 30s timeout
   const timestamp = new Date().toISOString();
 
   try {
-    console.log(`[${timestamp}] CLAUDE Sending query to ${CLAUDE_API_URL}...`);
+    console.log(`[${timestamp}] CLAUDE Sending query to ${apiUrl}...`);
     if (callId) {
       console.log(`[${timestamp}] CLAUDE Session: ${callId}`);
     }
@@ -30,7 +31,7 @@ async function query(prompt, options = {}) {
     }
 
     const response = await axios.post(
-      `${CLAUDE_API_URL}/ask`,
+      `${apiUrl}/ask`,
       { prompt, callId, devicePrompt },
       {
         timeout: timeout * 1000,
@@ -70,15 +71,16 @@ async function query(prompt, options = {}) {
 /**
  * End a Claude session when a call ends
  * @param {string} callId - The call UUID to end the session for
+ * @param {string} [apiUrl] - claude-api-server to use (per extension)
  */
-async function endSession(callId) {
+async function endSession(callId, apiUrl = CLAUDE_API_URL) {
   if (!callId) return;
   
   const timestamp = new Date().toISOString();
   
   try {
     await axios.post(
-      `${CLAUDE_API_URL}/end-session`,
+      `${apiUrl}/end-session`,
       { callId },
       { 
         timeout: 5000,

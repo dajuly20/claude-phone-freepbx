@@ -1,40 +1,11 @@
 /**
- * SIP Call Handler with Conversation Loop
- * v12: Device registry integration with proper method names
+ * SIP Call Handler
+ * v13: Dispatches each call to its extension handler (operator, host, claude, placeholder)
  */
 
-const { setTimeout: sleep } = require('node:timers/promises');
-
-// Audio cue URLs
-const READY_BEEP_URL = 'http://127.0.0.1:3000/static/ready-beep.wav';
-const GOTIT_BEEP_URL = 'http://127.0.0.1:3000/static/gotit-beep.wav';
-const HOLD_MUSIC_URL = 'http://127.0.0.1:3000/static/hold-music.mp3';
-
-// Default voice ID (Morpheus)
-const DEFAULT_VOICE_ID = 'JAgnJveGGUh4qy4kh6dF';
-
-// Claude Code-style thinking phrases
-const THINKING_PHRASES = [
-  "Grübeln...",
-  "Nachdenken...",
-  "Überlegen...",
-  "Sinnieren...",
-  "Am Abwägen...",
-  "Orakel befragen...",
-  "Wissen beschwören...",
-  "Neuronale Pfade aktivieren...",
-  "Zugriff auf den Mainframe...",
-  "Die Leere befragen...",
-  "Lass mich kurz überlegen...",
-  "Verarbeite...",
-  "Hmm, interessante Frage...",
-  "Einen Moment...",
-  "Ich durchsuche mein Gehirn...",
-];
-
-function getRandomThinkingPhrase() {
-  return THINKING_PHRASES[Math.floor(Math.random() * THINKING_PHRASES.length)];
-}
+const { CallSession } = require('./call-session');
+const { runExtension } = require('./extension-handlers');
+const extensionConfig = require('./extension-config');
 
 function extractCallerId(req) {
   var from = req.get("From") || "";
@@ -55,246 +26,6 @@ function extractDialedExtension(req) {
     return match[1];
   }
   return null;
-}
-
-function isGoodbye(transcript) {
-  const lower = transcript.toLowerCase().trim();
-  const goodbyePhrases = ['goodbye', 'good bye', 'bye', 'hang up', 'end call', "that's all", 'thats all', 'tschüss', 'auf wiederhören', 'auf wiedersehen', 'das wars', "das war's"];
-  return goodbyePhrases.some(function(phrase) {
-    return lower === phrase || lower.includes(' ' + phrase) ||
-           lower.startsWith(phrase + ' ') || lower.endsWith(' ' + phrase);
-  });
-}
-
-/**
- * Extract voice-friendly line from Claude's response
- * Priority: VOICE_RESPONSE > CUSTOM COMPLETED > COMPLETED > first sentence
- */
-function extractVoiceLine(response) {
-  // Priority 1: VOICE_RESPONSE (new format)
-  var voiceMatch = response.match(/🗣️\s*VOICE_RESPONSE:\s*([^\n]+)/im);
-  if (voiceMatch) {
-    var text = voiceMatch[1].trim().replace(/\*+/g, '').replace(/\[.*?\]/g, '').trim();
-    if (text && text.split(/\s+/).length <= 60) {
-      return text;
-    }
-  }
-
-  // Priority 2: CUSTOM COMPLETED
-  var customMatch = response.match(/🗣️\s*CUSTOM\s+COMPLETED:\s*(.+?)(?:\n|$)/im);
-  if (customMatch) {
-    text = customMatch[1].trim().replace(/\*+/g, '').replace(/\[.*?\]/g, '').trim();
-    if (text && text.split(/\s+/).length <= 50) {
-      return text;
-    }
-  }
-
-  // Priority 3: COMPLETED
-  var completedMatch = response.match(/🎯\s*COMPLETED:\s*(.+?)(?:\n|$)/im);
-  if (completedMatch) {
-    return completedMatch[1].trim().replace(/\*+/g, '').replace(/\[.*?\]/g, '').trim();
-  }
-
-  // Priority 4: First sentence
-  var firstSentence = response.split(/[.!?]/)[0];
-  if (firstSentence && firstSentence.length < 500) {
-    return firstSentence.trim();
-  }
-
-  return response.substring(0, 500).trim();
-}
-
-/**
- * Main conversation loop
- * @param {Object} deviceConfig - Device configuration (name, prompt, voiceId, etc.) or null for default
- */
-async function conversationLoop(endpoint, dialog, callUuid, options, deviceConfig) {
-  const { ttsService, whisperClient, claudeBridge, wsPort, audioForkServer } = options;
-
-  let session = null;
-  let forkRunning = false;
-  let callActive = true;
-
-  const onDialogDestroy = () => { callActive = false; };
-  dialog.on('destroy', onDialogDestroy);
-
-  // Get device-specific settings
-  const deviceName = deviceConfig ? deviceConfig.name : 'Morpheus';
-  const devicePrompt = deviceConfig ? deviceConfig.prompt : null;
-  const voiceId = (deviceConfig && deviceConfig.voiceId) ? deviceConfig.voiceId : DEFAULT_VOICE_ID;
-  const greeting = deviceConfig && deviceConfig.name !== 'Morpheus'
-    ? "Hallo! Hier ist " + deviceConfig.name + ". Wie kann ich dir helfen?"
-    : "Hallo! Hier ist Morpheus. Wie kann ich dir helfen?";
-
-  try {
-    console.log('[' + new Date().toISOString() + '] CONVERSATION Starting (session: ' + callUuid + ', device: ' + deviceName + ', voice: ' + voiceId + ')...');
-
-    // Play device-specific greeting with device voice
-    const greetingUrl = await ttsService.generateSpeech(greeting, voiceId);
-    await endpoint.play(greetingUrl);
-
-    // Start fork for entire call
-    const wsUrl = 'ws://127.0.0.1:' + wsPort + '/' + encodeURIComponent(callUuid);
-    const sessionPromise = audioForkServer.expectSession(callUuid, { timeoutMs: 10000 });
-
-    await endpoint.forkAudioStart({
-      wsUrl: wsUrl,
-      mixType: 'mono',
-      sampling: '16k'
-    });
-    forkRunning = true;
-
-    session = await sessionPromise;
-    console.log('[' + new Date().toISOString() + '] AUDIO Fork connected');
-
-    // Main conversation loop
-    let turnCount = 0;
-    const MAX_TURNS = 20;
-
-    while (turnCount < MAX_TURNS && callActive) {
-      turnCount++;
-      console.log('[' + new Date().toISOString() + '] CONVERSATION Turn ' + turnCount + '/' + MAX_TURNS);
-
-      // READY BEEP
-      try {
-        if (callActive) await endpoint.play(READY_BEEP_URL);
-      } catch (e) {
-        console.log('[' + new Date().toISOString() + '] BEEP: Ready beep failed, continuing');
-      }
-
-      session.setCaptureEnabled(true);
-      console.log('[' + new Date().toISOString() + '] LISTEN Waiting for speech...');
-
-      let utterance = null;
-      try {
-        utterance = await session.waitForUtterance({ timeoutMs: 30000 });
-        console.log('[' + new Date().toISOString() + '] LISTEN Got: ' + utterance.audio.length + ' bytes');
-      } catch (err) {
-        console.log('[' + new Date().toISOString() + '] LISTEN Timeout: ' + err.message);
-      }
-
-      session.setCaptureEnabled(false);
-
-      if (!callActive) break;
-
-      if (!utterance) {
-        const promptUrl = await ttsService.generateSpeech("Ich habe nichts gehört. Bist du noch da?", voiceId);
-        if (callActive) await endpoint.play(promptUrl);
-        continue;
-      }
-
-      // GOT-IT BEEP
-      try {
-        if (callActive) await endpoint.play(GOTIT_BEEP_URL);
-      } catch (e) {
-        console.log('[' + new Date().toISOString() + '] BEEP: Got-it beep failed, continuing');
-      }
-
-      // Transcribe
-      const transcript = await whisperClient.transcribe(utterance.audio, {
-        format: 'pcm',
-        sampleRate: 16000
-      });
-
-      console.log('[' + new Date().toISOString() + '] WHISPER: "' + transcript + '"');
-
-      if (!transcript || transcript.trim().length < 2) {
-        const clarifyUrl = await ttsService.generateSpeech("Entschuldigung, das habe ich nicht verstanden. Kannst du das wiederholen?", voiceId);
-        if (callActive) await endpoint.play(clarifyUrl);
-        continue;
-      }
-
-      if (isGoodbye(transcript)) {
-        const byeUrl = await ttsService.generateSpeech("Auf Wiederhören! Ruf gerne jederzeit wieder an.", voiceId);
-        if (callActive) await endpoint.play(byeUrl);
-        break;
-      }
-
-      // THINKING FEEDBACK
-      // Capped at 3s: ElevenLabs occasionally "hallucinates" an oversized
-      // clip (10+ seconds) for short filler phrases. Waiting for the full
-      // clip in that case would leave the caller in dead air, so we give up
-      // waiting after 3s and move on (the clip keeps playing in the background).
-      const thinkingPhrase = getRandomThinkingPhrase();
-      console.log('[' + new Date().toISOString() + '] THINKING: "' + thinkingPhrase + '"');
-      const thinkingUrl = await ttsService.generateSpeech(thinkingPhrase, voiceId);
-      if (callActive) {
-        try {
-          await Promise.race([
-            endpoint.play(thinkingUrl),
-            sleep(3000)
-          ]);
-        } catch (e) {
-          console.log('[' + new Date().toISOString() + '] BEEP: Thinking phrase playback failed, continuing');
-        }
-      }
-
-      if (!callActive) break;
-
-      // Hold music in background
-      let musicPlaying = false;
-      endpoint.play(HOLD_MUSIC_URL).catch(function(e) {
-        console.log('[' + new Date().toISOString() + '] MUSIC: Hold music failed, continuing');
-      });
-      musicPlaying = true;
-
-      // Query Claude with device-specific prompt
-      console.log('[' + new Date().toISOString() + '] CLAUDE Querying (device: ' + deviceName + ')...');
-      const claudeResponse = await claudeBridge.query(
-        transcript,
-        { callId: callUuid, devicePrompt: devicePrompt }
-      );
-
-      // Stop hold music
-      if (musicPlaying) {
-        try {
-          await endpoint.api('uuid_break', endpoint.uuid);
-        } catch (e) {}
-      }
-
-      console.log('[' + new Date().toISOString() + '] CLAUDE Response received');
-
-      if (!callActive) break;
-
-      // Extract and play voice line with device voice
-      const voiceLine = extractVoiceLine(claudeResponse);
-      console.log('[' + new Date().toISOString() + '] VOICE: "' + voiceLine + '"');
-
-      const responseUrl = await ttsService.generateSpeech(voiceLine, voiceId);
-      if (callActive) await endpoint.play(responseUrl);
-
-      console.log('[' + new Date().toISOString() + '] CONVERSATION Turn ' + turnCount + ' complete');
-    }
-
-    if (turnCount >= MAX_TURNS && callActive) {
-      const maxUrl = await ttsService.generateSpeech("Wir haben jetzt schon eine Weile gesprochen. Auf Wiederhören!", voiceId);
-      await endpoint.play(maxUrl);
-    }
-
-  } catch (error) {
-    console.error('[' + new Date().toISOString() + '] CONVERSATION Error:', error.message);
-    try {
-      if (session) session.setCaptureEnabled(false);
-      if (callActive) {
-        const errUrl = await ttsService.generateSpeech("Entschuldigung, da ist etwas schiefgelaufen.", voiceId);
-        await endpoint.play(errUrl);
-      }
-    } catch (e) {}
-  } finally {
-    console.log('[' + new Date().toISOString() + '] CONVERSATION Cleanup...');
-
-    try {
-      await claudeBridge.endSession(callUuid);
-    } catch (e) {}
-
-    if (forkRunning) {
-      try {
-        await endpoint.forkAudioStop();
-      } catch (e) {}
-    }
-
-    try { dialog.destroy(); } catch (e) {}
-  }
 }
 
 /**
@@ -346,6 +77,10 @@ async function handleInvite(req, res, options) {
     deviceConfig = deviceRegistry.get(dialedExt);
     if (deviceConfig) {
       console.log('[' + new Date().toISOString() + '] CALL Device matched: ' + deviceConfig.name + ' (ext ' + dialedExt + ')');
+    } else if (extensionConfig.exists()) {
+      console.log('[' + new Date().toISOString() + '] CALL Unknown extension ' + dialedExt + ', not in phone book');
+      deviceConfig = { name: 'Unbekannt', extension: dialedExt, type: 'placeholder',
+        message: 'Diese Nebenstelle ist nicht eingerichtet.' };
     } else {
       console.log('[' + new Date().toISOString() + '] CALL Unknown extension ' + dialedExt + ', using default');
       deviceConfig = deviceRegistry.getDefault();
@@ -373,7 +108,15 @@ async function handleInvite(req, res, options) {
       if (endpoint) endpoint.destroy().catch(function() {});
     });
 
-    await conversationLoop(endpoint, dialog, callUuid, options, deviceConfig);
+    const call = new CallSession({ endpoint, dialog, callUuid, options, device: deviceConfig });
+    try {
+      await runExtension(call, deviceConfig, options);
+    } catch (err) {
+      console.error('[' + new Date().toISOString() + '] CALL Handler error:', err.message);
+      try { await call.say('Entschuldigung, da ist etwas schiefgelaufen.'); } catch (e) {}
+    } finally {
+      await call.close();
+    }
     return { endpoint: endpoint, dialog: dialog, callerId: callerId, callUuid: callUuid };
 
   } catch (error) {
