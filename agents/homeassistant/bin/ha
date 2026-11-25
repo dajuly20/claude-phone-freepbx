@@ -5,7 +5,8 @@
  * Every read and every action is checked against ../permissions.json:
  *   read     entity patterns that may be read ("*" = wildcard)
  *   write    entity patterns that may be switched, optional value limits
- *            per service field, e.g. { "temperature": [16, 24] }
+ *            per service field, e.g. { "temperature": [16, 24] }, and
+ *            "_services": [...] to allow only certain services
  *   confirm  entity patterns that need --confirmed (caller said yes)
  *   callers  entity patterns only allowed for certain caller extensions
  *            (from CLAUDE_PHONE_CALLER, set by claude-api-server per call)
@@ -66,6 +67,17 @@ function canRead(perm, entity) {
   return match(entity, perm.read) || match(entity, perm.write) || match(entity, perm.confirm) || match(entity, perm.callers);
 }
 
+/** Presence only as home / not_home – no zones, no GPS */
+function redact(s) {
+  if (!s.entity_id.startsWith('person.')) return s;
+  return {
+    entity_id: s.entity_id,
+    state: s.state === 'home' ? 'home' : 'not_home',
+    attributes: { friendly_name: (s.attributes || {}).friendly_name },
+    last_changed: undefined
+  };
+}
+
 function brief(s) {
   const a = s.attributes || {};
   const unit = a.unit_of_measurement ? ' ' + a.unit_of_measurement : '';
@@ -82,6 +94,7 @@ async function cmdList(perm, filter) {
   const states = await api('GET', '/api/states');
   const rows = states
     .filter((s) => canRead(perm, s.entity_id))
+    .map(redact)
     .filter((s) => !filter || (s.entity_id + ' ' + (s.attributes.friendly_name || '')).toLowerCase().includes(filter.toLowerCase()))
     .map(brief);
   console.log(rows.length ? rows.join('\n') : '(keine passenden Entitäten)');
@@ -90,7 +103,7 @@ async function cmdList(perm, filter) {
 async function cmdGet(perm, entity) {
   if (!entity) fail('ha get <entity_id>');
   if (!canRead(perm, entity)) fail(`${entity} darf nicht gelesen werden`);
-  const s = await api('GET', '/api/states/' + encodeURIComponent(entity));
+  const s = redact(await api('GET', '/api/states/' + encodeURIComponent(entity)));
   console.log(JSON.stringify({ entity_id: s.entity_id, state: s.state, attributes: s.attributes, last_changed: s.last_changed }, null, 2));
 }
 
@@ -122,18 +135,32 @@ async function cmdCall(perm, service, entity, rest) {
     fail(`${entity} braucht eine Rückfrage beim Anrufer. Erst fragen, dann mit --confirmed aufrufen.`);
   }
 
-  // Value limits, e.g. temperature 16–24, volume_level 0–0.5
+  const [domain, svc] = service.split('.');
   const limits = (writeKey && perm.write[writeKey]) || {};
+  if (limits._services && !limits._services.includes(svc)) {
+    fail(`${service} ist für ${entity} nicht erlaubt (erlaubt: ${limits._services.join(', ')})`);
+  }
+  // Stepping up would get around a volume limit
+  if (limits.volume_level && svc === 'volume_up') {
+    fail('volume_up ist gesperrt, bitte media_player.volume_set mit volume_level verwenden');
+  }
+
+  // Value limits, e.g. temperature 16–24, volume_level 0–0.5
   for (const [field, range] of Object.entries(limits)) {
-    if (!(field in fields)) continue;
+    if (field.startsWith('_') || !(field in fields)) continue;
     const v = Number(fields[field]);
     if (isNaN(v) || v < range[0] || v > range[1]) {
       fail(`${field}=${fields[field]} ist nicht erlaubt (erlaubt: ${range[0]} bis ${range[1]})`);
     }
   }
 
-  const [domain, svc] = service.split('.');
-  await api('POST', `/api/services/${domain}/${svc}`, { entity_id: entity, ...fields });
+  let body = { entity_id: entity, ...fields };
+  if (domain === 'script') {
+    // Scripts get their fields as variables; "quelle" comes from us, not the agent
+    const variables = { ...fields, quelle: 'Claude Phone, Nebenstelle ' + (CLAUDE_PHONE_CALLER || 'unbekannt') };
+    body = svc === 'turn_on' ? { entity_id: entity, variables } : { entity_id: entity, ...variables };
+  }
+  await api('POST', `/api/services/${domain}/${svc}`, body);
   console.log(`ok: ${service} ${entity} ${JSON.stringify(fields)}`);
 }
 

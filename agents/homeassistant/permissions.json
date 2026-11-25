@@ -1,7 +1,238 @@
 {
-  "_hinweis": "Platzhalter – wird aus /config/docs/claude_phone_ha.md (Home Assistant) befüllt. Solange leer, darf der Agent nichts.",
-  "read": [],
-  "write": {},
-  "confirm": {},
-  "callers": {}
+  "_hinweis": "Aus /config/docs/claude_phone_ha.md (Home Assistant). Was hier nicht steht, ist verboten. SILVAN_/LARS_NEBENSTELLE durch die echten Nebenstellen ersetzen. _services = nur diese Dienste erlaubt.",
+  "read": [
+    "sensor.*_temperature",
+    "sensor.*_humidity",
+    "sensor.*_local_temperature",
+    "sensor.taupunkt_*",
+    "weather.forecast_home",
+    "binary_sensor.*_contact",
+    "binary_sensor.klingel_input_1",
+    "switch.klingel_input",
+    "person.julian_wiche",
+    "person.silvan_schmitz",
+    "person.lars_kruse",
+    "sensor.stromzaehler_gesamt_leistung",
+    "sensor.waschmaschine_kl_bad_leistung",
+    "sensor.spuelmaschine_steckdose_leistung",
+    "sensor.geschirrspuler_*",
+    "todo.google_keep_einkaufen",
+    "calendar.wg_kalender",
+    "calendar.wg_putzplan",
+    "light.allgemeinbereich",
+    "light.allgemein_zentral",
+    "light.lampewohnzimmer",
+    "light.azorenfunzel",
+    "light.kuechenlichter",
+    "light.halogenlampekuche",
+    "light.esstischtradfribirne",
+    "light.flur_licht_eingang",
+    "light.flur_licht_hinten",
+    "light.lichterkette",
+    "switch.grosses_bad_licht",
+    "light.julian_alle_lichter",
+    "light.stehlampen",
+    "light.juliandeckenlicht",
+    "light.led_controller_bett",
+    "cover.rollo_tuer",
+    "cover.rollo_bett",
+    "cover.rollos",
+    "climate.julian_heizung",
+    "climate.bad_gross_heizung",
+    "climate.kleines_bad",
+    "climate.climate_romina",
+    "media_player.tx_nr575e",
+    "media_player.sony_wohnzimmer",
+    "vacuum.stroborobo",
+    "light.romy_*",
+    "light.lars_*"
+  ],
+  "write": {
+    "light.allgemeinbereich": {},
+    "light.allgemein_zentral": {},
+    "light.lampewohnzimmer": {
+      "brightness_pct": [
+        1,
+        100
+      ]
+    },
+    "light.azorenfunzel": {
+      "brightness_pct": [
+        1,
+        100
+      ]
+    },
+    "light.kuechenlichter": {
+      "brightness_pct": [
+        1,
+        100
+      ]
+    },
+    "light.halogenlampekuche": {
+      "brightness_pct": [
+        1,
+        100
+      ]
+    },
+    "light.esstischtradfribirne": {
+      "brightness_pct": [
+        1,
+        100
+      ]
+    },
+    "light.flur_licht_eingang": {},
+    "light.flur_licht_hinten": {},
+    "light.lichterkette": {
+      "brightness_pct": [
+        1,
+        100
+      ]
+    },
+    "switch.grosses_bad_licht": {},
+    "light.julian_alle_lichter": {
+      "brightness_pct": [
+        1,
+        100
+      ]
+    },
+    "light.stehlampen": {
+      "brightness_pct": [
+        1,
+        100
+      ]
+    },
+    "light.juliandeckenlicht": {
+      "brightness_pct": [
+        1,
+        100
+      ]
+    },
+    "light.led_controller_bett": {
+      "brightness_pct": [
+        1,
+        100
+      ]
+    },
+    "cover.rollo_tuer": {
+      "position": [
+        0,
+        100
+      ]
+    },
+    "cover.rollo_bett": {
+      "position": [
+        0,
+        100
+      ]
+    },
+    "cover.rollos": {
+      "position": [
+        0,
+        100
+      ]
+    },
+    "climate.julian_heizung": {
+      "temperature": [
+        16,
+        24
+      ]
+    },
+    "climate.bad_gross_heizung": {
+      "temperature": [
+        16,
+        24
+      ]
+    },
+    "climate.kleines_bad": {
+      "temperature": [
+        16,
+        24
+      ]
+    },
+    "media_player.tx_nr575e": {
+      "volume_level": [
+        0,
+        0.5
+      ],
+      "_services": [
+        "turn_on",
+        "turn_off",
+        "volume_set",
+        "volume_mute",
+        "media_play",
+        "media_pause",
+        "media_stop",
+        "select_source"
+      ]
+    },
+    "media_player.sony_wohnzimmer": {
+      "volume_level": [
+        0,
+        0.5
+      ],
+      "_services": [
+        "turn_on",
+        "turn_off",
+        "volume_set",
+        "volume_mute",
+        "media_play",
+        "media_pause",
+        "media_stop",
+        "select_source"
+      ]
+    },
+    "script.medien_alle_aus": {
+      "_services": [
+        "turn_on"
+      ]
+    },
+    "script.julian_schlafen": {
+      "_services": [
+        "turn_on"
+      ]
+    },
+    "vacuum.stroborobo": {
+      "_services": [
+        "start",
+        "return_to_base"
+      ]
+    },
+    "todo.google_keep_einkaufen": {
+      "_services": [
+        "add_item"
+      ]
+    },
+    "light.romy_*": {
+      "brightness_pct": [
+        1,
+        100
+      ]
+    },
+    "climate.climate_romina": {
+      "temperature": [
+        16,
+        24
+      ]
+    },
+    "light.lars_*": {
+      "brightness_pct": [
+        1,
+        100
+      ]
+    }
+  },
+  "confirm": {
+    "script.haustuer_per_telefon": "Haustür unten öffnen"
+  },
+  "callers": {
+    "light.romy_*": [
+      "SILVAN_NEBENSTELLE"
+    ],
+    "climate.climate_romina": [
+      "SILVAN_NEBENSTELLE"
+    ],
+    "light.lars_*": [
+      "LARS_NEBENSTELLE"
+    ]
+  }
 }
