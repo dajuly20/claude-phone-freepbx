@@ -15,11 +15,11 @@ voice-app/           ← SIP/Audio-Logik
 
 | Nr. | Typ | Was passiert |
 |---|---|---|
-| 999 | `operator` | Vermittlung: Claude (Container `agent-vermittlung`) fragt, wohin, und stellt per SIP-REFER durch |
-| 900 | `host` | Prüft `julian-pc`. Wenn Claude dort läuft: direkt verbinden. Wenn aus: „Soll ich ihn starten?" → Wake-on-LAN → wartet → verbindet |
-| 901 | `placeholder` | Netzwerk-Agent, sagt erstmal nur „noch nicht eingerichtet" |
+| 800 | `operator` | Vermittlung: Claude (Container `agent-vermittlung`) fragt, wohin, und stellt per SIP-REFER durch |
+| 801 | `host` | Prüft `julian-pc`. Wenn Claude dort läuft: direkt verbinden. Wenn aus: „Soll ich ihn starten?" → Wake-on-LAN → wartet → verbindet |
+| 802 | `placeholder` | Netzwerk-Agent, sagt erstmal nur „noch nicht eingerichtet" |
 
-### Ablauf 900 (Host)
+### Ablauf 801 (Host)
 
 1. Alle `addresses` werden aufgelöst (Hostnamen in alle IPs), und an jeder Adresse wird
    `GET http://<ip>:<claude_port>/health` geprüft. Die erste, die antwortet, wird genommen.
@@ -42,12 +42,12 @@ für ausgehende Anrufe an (siehe [voice-app/README-OUTBOUND.md](../voice-app/REA
 ```bash
 curl -X POST http://192.168.188.222:3000/api/outbound-call \
   -H 'Content-Type: application/json' \
-  -d '{"to": "10", "device": "900", "message": "Backup ist fertig.", "mode": "conversation"}'
+  -d '{"to": "10", "device": "801", "message": "Backup ist fertig.", "mode": "conversation"}'
 ```
 
 - `to`: Nebenstelle, nationale Nummer oder `+49…` (wird zu `0…`; Präfix über `PSTN_DIAL_PREFIX`)
 - `device`: Nebenstelle, von der aus angerufen wird. Sie bestimmt Absender, Stimme und
-  Claude-Instanz für Rückfragen. `900` heißt: Rückfragen beantwortet Claude auf deinem Rechner.
+  Claude-Instanz für Rückfragen. `801` heißt: Rückfragen beantwortet Claude auf deinem Rechner.
 - `mode`: `announce` sagt nur die Nachricht an, `conversation` lässt danach Rückfragen zu.
 
 Auf deinem Rechner macht das der Call-Skill (`~/.claude/skills/call`), z.B. „ruf mich an,
@@ -67,15 +67,15 @@ hosts:
     wake: { macs: [aa:bb:cc:dd:ee:ff], broadcast: 192.168.188.255 }
 
 extensions:
-  "902":
+  "803":
     name: Proxmox
     type: host
     host: proxmox
-    password: ${EXT_902_PASSWORD}
+    password: ${EXT_803_PASSWORD}
     description: Claude auf dem Proxmox-Server
 ```
 
-Danach `EXT_902_PASSWORD` in `.env` eintragen, die Nebenstelle 902 in FreePBX
+Danach `EXT_803_PASSWORD` in `.env` eintragen, die Nebenstelle 803 in FreePBX
 anlegen und `docker compose up -d` ausführen. Die Vermittlung kennt die neue
 Nebenstelle automatisch, weil das Telefonbuch bei jedem Anruf mitgeschickt wird.
 
@@ -85,7 +85,7 @@ Claude-Antwort), `auth_id` (Standard ist die Nebenstellen-Nummer).
 
 ## FreePBX vorbereiten
 
-Für jede Nebenstelle (999, 900, 901) eine **PJSIP-Extension** anlegen:
+Für jede Nebenstelle (800, 801, 802) eine **PJSIP-Extension** anlegen:
 - Secret wie in `.env`
 - Transfers erlaubt (Standard), damit die Vermittlung per REFER durchstellen kann
 - Die voice-app registriert sich mit `EXTERNAL_IP:5060`. Auf docker.mrz.ip
@@ -103,7 +103,7 @@ docker compose logs -f voice-app
 
 - **Wake-on-LAN** funktioniert nur, wenn der Laptop zu Hause per Kabel dranhängt
   (Dock oder Onboard-Port), am Netzteil ist und WoL im BIOS aktiviert ist. Per WLAN oder
-  unterwegs kann man ihn nicht wecken. Dann sagt 900 nach dem Wecken irgendwann,
+  unterwegs kann man ihn nicht wecken. Dann sagt 801 nach dem Wecken irgendwann,
   dass er nicht hochgekommen ist.
 - Unterwegs ist der Laptop nur erreichbar, wenn der WireGuard-Tunnel `wgprec2026` aktiv ist.
 - Die Vermittlung startet pro Gesprächsrunde einen Claude-Code-Prozess.

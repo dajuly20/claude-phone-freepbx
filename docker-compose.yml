@@ -52,31 +52,31 @@ configs:
       #        claude      → direkt mit einer Claude-Instanz (agent: URL)
       #        placeholder → spricht "message" und legt auf
       extensions:
-        "999":
+        "800":
           name: Vermittlung
           type: operator
           agent: http://127.0.0.1:3401          # → Service agent-vermittlung
-          password: ${EXT_999_PASSWORD}
+          password: ${EXT_800_PASSWORD}
           description: Vermittlung, verbindet zu allen anderen Nebenstellen
 
-        "900":
+        "801":
           name: Julians Rechner
           type: host
           host: julian-pc
-          password: ${EXT_900_PASSWORD}
+          password: ${EXT_801_PASSWORD}
           description: Claude Code auf Julians Rechner. Weckt den Rechner bei Bedarf.
 
-        "901":
+        "802":
           name: Netzwerk-Agent
           type: placeholder
-          password: ${EXT_901_PASSWORD}
+          password: ${EXT_802_PASSWORD}
           description: Netzwerk-Agent (noch nicht eingerichtet)
           message: Der Netzwerk-Agent ist noch nicht eingerichtet. Bis bald!
           # später:  type: claude
           #          agent: http://127.0.0.1:3402   (→ Service agent-netzwerk)
 
       # ── Weitere Ziele für die Vermittlung (normale Telefone etc.) ───────
-      #  Werden nicht registriert, nur von 999 als Durchstell-Ziel genannt.
+      #  Werden nicht registriert, nur von 800 als Durchstell-Ziel genannt.
       directory: {}
         # "10": Julians Handy
 
@@ -141,7 +141,7 @@ services:
     ports:
       - "127.0.0.1:3401:3333"
 
-  # agent-netzwerk:                      # für 901, später
+  # agent-netzwerk:                      # für 802, später
   #   build: { context: ., dockerfile: claude-agent/Dockerfile }
   #   restart: unless-stopped
   #   environment:
