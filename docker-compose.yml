@@ -141,6 +141,7 @@ services:
         target: /app/config/extensions.yml
     volumes:
       - audio:/app/audio
+      - data:/app/data          # zuletzt gewählte Ziele der Vermittlung
     depends_on: [drachtio, freeswitch]
 
   # ── Claude-Instanzen ────────────────────────────────────────────────────
@@ -211,3 +212,4 @@ services:
 
 volumes:
   audio:
+  data:

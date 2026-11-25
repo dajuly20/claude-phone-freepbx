@@ -97,6 +97,7 @@ class AudioForkSession extends EventEmitter {
 
   _startUtteranceWithPreRoll() {
     this._inSpeech = true;
+    this.emit('speechStart');
     this._utteranceChunks = [];
     this._utteranceBytes = 0;
     this._speechBytes = 0;
@@ -250,7 +251,11 @@ class AudioForkSession extends EventEmitter {
     if (this._silenceMs >= this.endSilenceMs) return this._finalizeUtterance('end_silence');
   }
 
-  waitForUtterance({ timeoutMs = 30000 } = {}) {
+  /**
+   * @param {number} [opts.noSpeechMs] - reject with err.code='NO_SPEECH' if the
+   *   caller has not started speaking within this time (speaking cancels it)
+   */
+  waitForUtterance({ timeoutMs = 30000, noSpeechMs = 0 } = {}) {
     console.log('[AUDIO-DEBUG] waitForUtterance called, timeoutMs=' + timeoutMs + ', captureEnabled=' + this.captureEnabled);
     return new Promise((resolve, reject) => {
       const onUtterance = (u) => {
@@ -273,13 +278,30 @@ class AudioForkSession extends EventEmitter {
         reject(new Error('Timed out waiting for utterance (' + timeoutMs + 'ms) for call ' + this.callUuid));
       }, timeoutMs);
 
+      let noSpeechTimer = null;
+      const onSpeechStart = () => {
+        if (noSpeechTimer) clearTimeout(noSpeechTimer);
+        noSpeechTimer = null;
+      };
+      if (noSpeechMs > 0 && !this._inSpeech) {
+        noSpeechTimer = setTimeout(() => {
+          cleanup();
+          const err = new Error('No speech within ' + noSpeechMs + 'ms for call ' + this.callUuid);
+          err.code = 'NO_SPEECH';
+          reject(err);
+        }, noSpeechMs);
+      }
+
       const cleanup = () => {
         clearTimeout(timer);
+        if (noSpeechTimer) clearTimeout(noSpeechTimer);
+        this.off('speechStart', onSpeechStart);
         this.off('utterance', onUtterance);
         this.off('close', onClose);
         this.off('error', onError);
       };
 
+      this.on('speechStart', onSpeechStart);
       this.on('utterance', onUtterance);
       this.on('close', onClose);
       this.on('error', onError);

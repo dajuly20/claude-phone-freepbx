@@ -6,9 +6,11 @@
 const axios = require('axios');
 const hostControl = require('./host-control');
 const pbxDirectory = require('./pbx-directory');
+const recentTargets = require('./recent-targets');
 const { parseYesNo, sleep } = require('./call-session');
 
 const TRANSFER_RE = /🔀\s*TRANSFER:\s*\*?\*?\s*([0-9*#+]+)/i;
+const OPERATOR_SILENCE_MS = 5000; // caller silent after greeting → read recent targets
 const HOST_POLL_MS = 5000;
 const HOST_STATUS_EVERY_MS = 30000;
 
@@ -59,6 +61,24 @@ async function handlePlaceholder(call, device) {
   await call.say(device.message || device.name + ' ist noch nicht eingerichtet.');
 }
 
+/**
+ * "Zuletzt gewählt: …" – the caller's last targets, topped up with own
+ * agents and people from the PBX book so there is always something to say.
+ */
+function recentTargetsText(callerId, pbx, devices, selfExtension) {
+  const names = {};
+  for (const d of Object.values(devices || {})) names[String(d.extension)] = d.name;
+  if (pbx) for (const z of pbx.ziele) names[z.nummer] = z.name; // PBX names win
+  const fillers = Object.values(devices || {}).map(d => String(d.extension))
+    .concat(pbx ? pbx.ziele.filter(z => z.art === 'person').map(z => z.nummer) : [])
+    .filter(n => n !== String(selfExtension));
+  const list = recentTargets.recent(callerId, 5, fillers)
+    .filter(n => n !== String(selfExtension) && names[n]);
+  if (!list.length) return 'Sag mir einfach, mit wem ich dich verbinden soll.';
+  return 'Zuletzt gewählt: ' + list.map(n => names[n]).join(', ') +
+    '. Sag einfach einen Namen.';
+}
+
 /** type: operator – Claude decides whom to connect, we REFER */
 async function handleOperator(call, device, ctx) {
   if (!(await agentReady(call, device))) return;
@@ -79,11 +99,18 @@ async function handleOperator(call, device, ctx) {
     greeting: device.greeting || 'Vermittlung, guten Tag. Mit wem darf ich dich verbinden?',
     devicePrompt: devicePrompt,
     timeout: device.timeout || 30,
+    firstSilenceMs: device.silence_hint_ms === undefined ? OPERATOR_SILENCE_MS : device.silence_hint_ms,
+    onFirstSilence: async function() {
+      const text = recentTargetsText(call.callerId, pbx, ctx.deviceRegistry.getAll(), device.extension);
+      log('OPERATOR silent caller – ' + text);
+      await call.say(text);
+    },
     onResponse: async function(response) {
       const match = response.match(TRANSFER_RE);
       if (!match) return 'continue';
       try {
         await call.transfer(match[1]);
+        recentTargets.record(call.callerId, match[1]);
       } catch (err) {
         log('TRANSFER failed: ' + err.message);
         await call.say('Das Durchstellen hat leider nicht geklappt.');

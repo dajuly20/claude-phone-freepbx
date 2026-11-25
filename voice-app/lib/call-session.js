@@ -161,9 +161,12 @@ class CallSession {
 
   /**
    * Wait for one utterance and transcribe it.
+   * @param {number} [opts.noSpeechMs] - give up early if nobody starts speaking;
+   *   then this.lastListenSilent is true
    * @returns {Promise<string|null>} transcript, or null on silence/unclear
    */
-  async listen({ timeoutMs = 30000 } = {}) {
+  async listen({ timeoutMs = 30000, noSpeechMs = 0 } = {}) {
+    this.lastListenSilent = false;
     await this.startListening();
     await this.play(READY_BEEP_URL);
     if (!this.active) return null;
@@ -172,8 +175,9 @@ class CallSession {
     log('LISTEN Waiting for speech...');
     let utterance = null;
     try {
-      utterance = await this.audio.waitForUtterance({ timeoutMs });
+      utterance = await this.audio.waitForUtterance({ timeoutMs, noSpeechMs });
     } catch (err) {
+      if (err.code === 'NO_SPEECH') this.lastListenSilent = true;
       log('LISTEN Timeout: ' + err.message);
     }
     this.audio.setCaptureEnabled(false);
@@ -229,8 +233,11 @@ class CallSession {
   /**
    * Multi-turn conversation with a claude-api-server.
    * @param {Function} [opts.onResponse] - (response) => 'continue' | 'stop'
+   * @param {number} [opts.firstSilenceMs] - after the greeting: if the caller says
+   *   nothing within this time, call opts.onFirstSilence() (once) and keep listening
    */
-  async converse(apiUrl, { greeting, devicePrompt, timeout, maxTurns = 20, onResponse } = {}) {
+  async converse(apiUrl, { greeting, devicePrompt, timeout, maxTurns = 20, onResponse,
+    firstSilenceMs = 0, onFirstSilence } = {}) {
     if (greeting) await this.say(greeting);
 
     let turn = 0;
@@ -238,8 +245,15 @@ class CallSession {
       turn++;
       log('CONVERSATION Turn ' + turn + '/' + maxTurns + ' (' + apiUrl + ')');
 
-      const transcript = await this.listen();
+      const firstTry = turn === 1 && firstSilenceMs > 0 && onFirstSilence;
+      const transcript = await this.listen(firstTry ? { noSpeechMs: firstSilenceMs } : {});
       if (!this.active) break;
+      if (!transcript && firstTry && this.lastListenSilent) {
+        await onFirstSilence();
+        turn--; // the hint does not count as a turn
+        firstSilenceMs = 0;
+        continue;
+      }
       if (!transcript) {
         await this.say("Ich habe nichts verstanden. Bist du noch da?");
         continue;
