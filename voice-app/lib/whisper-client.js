@@ -18,7 +18,11 @@ function getOpenAIClient() {
       return null;
     }
     openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY
+      apiKey: process.env.OPENAI_API_KEY,
+      // No retries: on the phone a quick, clear error beats 30s of silence
+      // (the SDK retries 429 "no credits" and then reports "Connection error")
+      maxRetries: 0,
+      timeout: 20000
     });
   }
   return openai;

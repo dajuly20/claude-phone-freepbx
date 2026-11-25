@@ -180,10 +180,21 @@ class CallSession {
     if (!utterance || !this.active) return null;
 
     await this.play(GOTIT_BEEP_URL);
-    const transcript = await this.options.whisperClient.transcribe(utterance.audio, {
-      format: 'pcm',
-      sampleRate: 16000
-    });
+    let transcript;
+    try {
+      transcript = await this.options.whisperClient.transcribe(utterance.audio, {
+        format: 'pcm',
+        sampleRate: 16000
+      });
+    } catch (err) {
+      // Tell the caller instead of going silent, then end the call
+      const noCredits = err.status === 429 && /quota|credit/i.test(err.code + ' ' + err.message);
+      log('WHISPER failed: ' + (err.status || '') + ' ' + (err.code || '') + ' ' + err.message);
+      await this.say(noCredits
+        ? 'Die Spracherkennung ist gerade nicht verfügbar: Das OpenAI-Guthaben ist aufgebraucht.'
+        : 'Die Spracherkennung funktioniert gerade nicht. Bitte versuch es später noch einmal.');
+      throw new Error('Speech recognition unavailable: ' + err.message);
+    }
     log('WHISPER: "' + transcript + '"');
     return transcript && transcript.trim().length >= 2 ? transcript : null;
   }

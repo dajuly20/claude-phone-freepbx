@@ -192,6 +192,21 @@ run_checks() {
         000) warn "api.openai.com nicht erreichbar" ;;
         *) warn "OPENAI_API_KEY: unerwartete Antwort (HTTP $HTTP_CODE)" ;;
       esac
+      # Guthaben: Modell-Liste geht auch ohne. Eine leere Datei an Whisper kostet
+      # nichts – ohne Guthaben kommt 429, sonst 400 (ungültige Datei)
+      if [[ $HTTP_CODE == 200 ]]; then
+        local wcode wbody
+        wbody=$(printf 'Authorization: Bearer %s\n' "$k" | curl -s -m 15 -H @- -F model=whisper-1 \
+          -F "file=@/dev/null;filename=leer.wav" https://api.openai.com/v1/audio/transcriptions -w '\n%{http_code}')
+        wcode=${wbody##*$'\n'}
+        if [[ $wcode == 429 ]] && grep -qiE 'quota|credit' <<<"$wbody"; then
+          fail "OpenAI-Guthaben aufgebraucht – Spracherkennung geht nicht (https://platform.openai.com/settings/organization/billing)"
+        elif [[ $wcode == 400 ]]; then
+          ok "OpenAI-Guthaben vorhanden (Whisper nimmt Anfragen an)"
+        else
+          warn "Whisper-Guthaben nicht prüfbar (HTTP $wcode)"
+        fi
+      fi
     fi
     # ElevenLabs-Keys können eingeschränkte Rechte haben → über die Stimme prüfen;
     # "missing_permissions" heißt: Key gültig, darf nur das nicht
