@@ -100,6 +100,18 @@ Optionale Felder pro Nebenstelle: `greeting`, `prompt` (zusätzlicher
 System-Prompt), `voice` (ElevenLabs-Voice-ID), `timeout` (Sekunden pro
 Claude-Antwort), `auth_id` (Standard ist die Nebenstellen-Nummer).
 
+## Spracherkennung
+
+`STT_PROVIDER` in der `.env` wählt, wer das Gesprochene in Text umwandelt:
+
+| Wert | Was | Braucht |
+|---|---|---|
+| `homeassistant` (empfohlen) | die STT von Home Assistant, Standard `stt.home_assistant_cloud` (Nabu Casa, kein Extra-Preis), anderer Provider über `HA_STT_PROVIDER` | `HA_URL`, `HA_TOKEN` |
+| `openai` | OpenAI Whisper | `OPENAI_API_KEY` mit Guthaben |
+
+`./check-config.sh` testet den gewählten Weg. Klappt die Spracherkennung beim Anruf nicht,
+sagt die voice-app das an und legt auf.
+
 ## Nummernkreis
 
 Die Nebenstellen liegen im **7xx-Bereich**. Andere Bereiche sind auf dieser FreePBX belegt:

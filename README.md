@@ -47,7 +47,7 @@ flowchart LR
         cc["Claude Code CLI"]
     end
 
-    cloud["OpenAI Whisper (STT)<br/>ElevenLabs (TTS)"]
+    cloud["Spracherkennung über Home Assistant Cloud<br/>(oder OpenAI Whisper)<br/>ElevenLabs (TTS)"]
 
     phone <--> pbx
     pbx <-- "SIP, registriert 700/701/702" --> drachtio
@@ -328,7 +328,7 @@ Workflow: am Laptop ändern → `git push` → auf docker.mrz.ip `git pull && do
 - **PIN für 701:** vor dem Zugriff auf Claude Code mit vollen Rechten eine Ziffernfolge abfragen (DTMF).
 - **Laptop-API nur für docker.mrz.ip:** Firewall-Regel auf dem Laptop, die Port 3333 nur für 192.168.188.222 freigibt.
 - **Healthcheck und Restart:** `healthcheck:` für voice-app und Agents in der Compose-Datei, Status in Uptime Kuma.
-- **Kosten im Blick:** Whisper- und ElevenLabs-Minuten pro Anruf loggen.
+- **Kosten im Blick:** ElevenLabs-Zeichen pro Anruf loggen.
 
 **Sprache**
 - **Lokale STT/TTS:** whisper.cpp oder faster-whisper und Piper auf docker.mrz.ip, dann ohne Cloud-Kosten.

@@ -136,6 +136,7 @@ run_checks() {
   for s in "${SETTINGS[@]}"; do
     IFS='|' read -r name kind desc <<<"$s"
     [[ $name == ANTHROPIC_API_KEY || $name == CLAUDE_CODE_OAUTH_TOKEN ]] && continue
+    [[ $name == OPENAI_API_KEY && ${ENV[STT_PROVIDER]:-openai} != openai ]] && continue
     val=${ENV[$name]:-}
     if [[ -z $val ]]; then
       fail "$name fehlt" "$name"
@@ -200,7 +201,11 @@ run_checks() {
           -F "file=@/dev/null;filename=leer.wav" https://api.openai.com/v1/audio/transcriptions -w '\n%{http_code}')
         wcode=${wbody##*$'\n'}
         if [[ $wcode == 429 ]] && grep -qiE 'quota|credit' <<<"$wbody"; then
-          fail "OpenAI-Guthaben aufgebraucht – Spracherkennung geht nicht (https://platform.openai.com/settings/organization/billing)"
+          if [[ ${ENV[STT_PROVIDER]:-openai} == openai ]]; then
+            fail "OpenAI-Guthaben aufgebraucht – Spracherkennung geht nicht (https://platform.openai.com/settings/organization/billing)"
+          else
+            warn "OpenAI-Guthaben aufgebraucht (egal, Spracherkennung läuft über ${ENV[STT_PROVIDER]})"
+          fi
         elif [[ $wcode == 400 ]]; then
           ok "OpenAI-Guthaben vorhanden (Whisper nimmt Anfragen an)"
         else
@@ -239,6 +244,15 @@ run_checks() {
       000) fail "Home Assistant unter $hau nicht erreichbar" HA_URL ;;
       *) warn "Home Assistant: unerwartete Antwort (HTTP $HTTP_CODE)" ;;
     esac
+    if [[ $HTTP_CODE == 200 && ${ENV[STT_PROVIDER]:-openai} == homeassistant ]]; then
+      # 0,3 s Stille an die STT-API: HTTP 200 heißt, Provider und Token passen
+      local sttp=${ENV[HA_STT_PROVIDER]:-stt.home_assistant_cloud} scode
+      scode=$(python3 -c 'import sys,wave; w=wave.open(sys.stdout.buffer,"wb"); w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000); w.writeframes(bytes(9600)); w.close()' \
+        | printf 'Authorization: Bearer %s\nContent-Type: audio/wav\nX-Speech-Content: format=wav; codec=pcm; sample_rate=16000; bit_rate=16; channel=1; language=de-DE\n' "$hat" \
+        | curl -s -o /dev/null -m 20 -w '%{http_code}' -H @- --data-binary @- "${hau%/}/api/stt/$sttp" 2>/dev/null)
+      [[ $scode == 200 ]] && ok "Spracherkennung über Home Assistant ($sttp) erreichbar" \
+        || fail "Spracherkennung $sttp antwortet mit HTTP ${scode:-000}" HA_STT_PROVIDER
+    fi
     if [[ $HTTP_CODE == 200 ]]; then
       local perm=agents/homeassistant/permissions.json
       if [[ -f $perm ]] && [[ $(jq '(.read|length) + (.write|length) + (.confirm|length)' "$perm" 2>/dev/null) == 0 ]]; then

@@ -1,8 +1,14 @@
 /**
- * OpenAI Whisper API Client for Speech-to-Text
- * Converts audio buffers (L16 PCM from FreeSWITCH) to text
+ * Speech-to-Text client
+ * Converts audio buffers (L16 PCM from FreeSWITCH) to text.
+ *
+ * STT_PROVIDER=openai (default)  OpenAI Whisper, needs OPENAI_API_KEY
+ * STT_PROVIDER=homeassistant     Home Assistant's STT API (e.g. Home Assistant
+ *                                Cloud), needs HA_URL + HA_TOKEN; provider entity
+ *                                via HA_STT_PROVIDER (default stt.home_assistant_cloud)
  */
 
+const axios = require("axios");
 const OpenAI = require("openai");
 const WaveFile = require("wavefile").WaveFile;
 const fs = require("fs");
@@ -56,6 +62,10 @@ function pcmToWav(pcmBuffer, sampleRate = 8000) {
  * @returns {Promise<string>} Transcribed text
  */
 async function transcribe(audioBuffer, options = {}) {
+  if (process.env.STT_PROVIDER === "homeassistant") {
+    return transcribeHomeAssistant(audioBuffer, options);
+  }
+
   const {
     format = "pcm",
     sampleRate = 8000,
@@ -102,10 +112,54 @@ async function transcribe(audioBuffer, options = {}) {
 }
 
 /**
- * Check if Whisper API is configured and available
- * @returns {boolean} True if API key is set
+ * Transcribe via Home Assistant's STT API (POST /api/stt/<provider>)
+ */
+async function transcribeHomeAssistant(audioBuffer, options = {}) {
+  const { format = "pcm", sampleRate = 8000, language = "de" } = options;
+  const { HA_URL, HA_TOKEN } = process.env;
+  const provider = process.env.HA_STT_PROVIDER || "stt.home_assistant_cloud";
+  if (!HA_URL || !HA_TOKEN) {
+    throw new Error("HA_URL/HA_TOKEN not configured");
+  }
+
+  const wavBuffer = format === "pcm" ? pcmToWav(audioBuffer, sampleRate) : audioBuffer;
+  const locale = language.includes("-") ? language : language + "-" + language.toUpperCase();
+
+  let res;
+  try {
+    res = await axios.post(HA_URL.replace(/\/$/, "") + "/api/stt/" + provider, wavBuffer, {
+      timeout: 20000,
+      headers: {
+        Authorization: "Bearer " + HA_TOKEN,
+        "Content-Type": "audio/wav",
+        "X-Speech-Content": "format=wav; codec=pcm; sample_rate=" + sampleRate +
+          "; bit_rate=16; channel=1; language=" + locale
+      }
+    });
+  } catch (err) {
+    // Same shape as OpenAI errors, so callers can report status/code
+    const e = new Error("Home Assistant STT failed: " + (err.response ? "HTTP " + err.response.status : err.message));
+    e.status = err.response && err.response.status;
+    e.code = err.code;
+    throw e;
+  }
+
+  if (!res.data || res.data.result !== "success") {
+    throw new Error("Home Assistant STT: " + JSON.stringify(res.data));
+  }
+  const text = res.data.text || "";
+  console.log("[" + new Date().toISOString() + "] STT (" + provider + ") Transcribed: " + text.substring(0, 100));
+  return text;
+}
+
+/**
+ * Check if speech-to-text is configured and available
+ * @returns {boolean} True if the selected provider has its credentials
  */
 function isAvailable() {
+  if (process.env.STT_PROVIDER === "homeassistant") {
+    return !!(process.env.HA_URL && process.env.HA_TOKEN);
+  }
   return !!process.env.OPENAI_API_KEY;
 }
 
