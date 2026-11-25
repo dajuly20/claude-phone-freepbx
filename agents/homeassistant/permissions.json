@@ -46,7 +46,7 @@
     "vacuum.stroborobo",
     "light.romy_*",
     "light.lars_*",
-    "scene.julian_*"
+    "scene.*"
   ],
   "write": {
     "light.allgemeinbereich": {},
@@ -221,7 +221,7 @@
         100
       ]
     },
-    "scene.julian_*": {
+    "scene.*": {
       "_services": [
         "turn_on"
       ]

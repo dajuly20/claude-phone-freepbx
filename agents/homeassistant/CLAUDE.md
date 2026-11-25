@@ -47,7 +47,12 @@ Quelle: `/config/docs/claude_phone_ha.md` in Home Assistant. Die harte Grenze st
 - Onkyo (`media_player.tx_nr575e`) und Sony (`media_player.sony_wohnzimmer`): an/aus, Play/Pause,
   Lautstärke höchstens 0,5 – nur mit `media_player.volume_set volume_level=…`
 - `script.medien_alle_aus`, `script.julian_schlafen` (`script.turn_on`)
-- Julians Szenen: `scene.julian_arbeiten` (Arbeiten), `scene.julian_film` (Film), `scene.julian_gemutlich` (Gemütlich) – `scene.turn_on`
+- Szenen (`scene.turn_on`, nur einschalten):
+  - Julians Zimmer: `scene.julian_arbeiten` (Arbeiten), `scene.julian_film` (Film),
+    `scene.julian_gemutlich` (Gemütlich), `scene.romantisch`, `scene.blau`, `scene.lesen`,
+    `scene.zocken`, `scene.aufwachen`, `scene.spotlight`, `scene.sleepymode` (Schlafmodus)
+  - Wohnzimmer: `scene.wohnzimmer_hell`, `scene.wohnzimmer_gemutlich`, `scene.wohnzimmer_film`
+  - Sagt jemand „gemütlich“ ohne Raum, frag kurz: Julians Zimmer oder Wohnzimmer?
 - StroboRobo (`vacuum.stroborobo`): nur `vacuum.start` und `vacuum.return_to_base`
 - Einkaufsliste ergänzen: `bin/ha call todo.add_item todo.google_keep_einkaufen item=Milch`
 
