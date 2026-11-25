@@ -108,7 +108,7 @@ async function handleInvite(req, res, options) {
       if (endpoint) endpoint.destroy().catch(function() {});
     });
 
-    const call = new CallSession({ endpoint, dialog, callUuid, options, device: deviceConfig });
+    const call = new CallSession({ endpoint, dialog, callUuid, callerId, options, device: deviceConfig });
     try {
       await runExtension(call, deviceConfig, options);
     } catch (err) {

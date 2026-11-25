@@ -100,10 +100,11 @@ function extractVoiceLine(response) {
 }
 
 class CallSession {
-  constructor({ endpoint, dialog, callUuid, options, device }) {
+  constructor({ endpoint, dialog, callUuid, callerId, options, device }) {
     this.endpoint = endpoint;
     this.dialog = dialog;
     this.callUuid = callUuid;
+    this.callerId = callerId || null;
     this.options = options;
     this.device = device;
     this.voiceId = (device && device.voiceId) || DEFAULT_VOICE_ID;
@@ -204,6 +205,7 @@ class CallSession {
 
     const response = await this.options.claudeBridge.query(transcript, {
       callId: this.callUuid,
+      caller: this.callerId,
       devicePrompt: devicePrompt,
       apiUrl: apiUrl,
       timeout: timeout

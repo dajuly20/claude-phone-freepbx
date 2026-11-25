@@ -18,6 +18,23 @@ voice-app/           ← SIP/Audio-Logik
 | 700 | `operator` | Vermittlung: Claude (Container `agent-vermittlung`) fragt, wohin, und stellt per SIP-REFER durch |
 | 701 | `host` | Prüft `julian-pc`. Wenn Claude dort läuft: direkt verbinden. Wenn aus: „Soll ich ihn starten?" → Wake-on-LAN → wartet → verbindet |
 | 702 | `placeholder` | Netzwerk-Agent, sagt erstmal nur „noch nicht eingerichtet" |
+| 703 | `claude` | Home Assistant: Container `agent-homeassistant`, siehe unten |
+
+### Home Assistant (703)
+
+- Der Agent läuft mit `CLAUDE_SKIP_PERMISSIONS=false`. Claude Code führt dann nur Werkzeuge aus,
+  die `agents/homeassistant/.claude/settings.json` erlaubt, also nur `bin/ha`.
+- `bin/ha` prüft jede Aktion gegen `agents/homeassistant/permissions.json`:
+  `read` (lesen), `write` (schalten, optional mit Grenzen wie `"temperature": [16, 24]`),
+  `confirm` (nur mit `--confirmed`, nachdem der Anrufer „ja“ gesagt hat) und `callers`
+  (nur für bestimmte Nebenstellen, z.B. das eigene Zimmer).
+- Die Nebenstelle des Anrufers kommt von der voice-app (`[ANRUFER]` im Prompt,
+  `CLAUDE_PHONE_CALLER` für `bin/ha`).
+- Home Assistant selbst kann Rechte nicht pro Gerät beschränken. Der HA-Benutzer
+  `claude-phone` ist kein Admin, darf per REST aber trotzdem alles schalten. Die Grenze ist
+  deshalb `permissions.json`. Der Token liegt im Container als Umgebungsvariable.
+- Vorlage für Rechte und `CLAUDE.md`: `/config/docs/claude_phone_ha.md` in Home Assistant.
+- HA kann selbst anrufen: `rest_command.claude_phone_call` (Felder `to`, `device`, `message`, `mode`).
 
 ### Ablauf 701 (Host)
 

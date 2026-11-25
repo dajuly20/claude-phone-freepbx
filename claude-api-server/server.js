@@ -214,11 +214,16 @@ function toSessionUuid(id) {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-a${h.slice(17, 20)}-${h.slice(20, 32)}`;
 }
 
-function runClaudeOnce({ fullPrompt, callId, timestamp }) {
+// CLAUDE_SKIP_PERMISSIONS=false: no --dangerously-skip-permissions. In -p mode
+// Claude Code then only runs tools allowed in the agent's .claude/settings.json
+// and denies everything else – a hard boundary for agents with real powers.
+const SKIP_PERMISSIONS = process.env.CLAUDE_SKIP_PERMISSIONS !== 'false';
+
+function runClaudeOnce({ fullPrompt, callId, caller, timestamp }) {
   const startTime = Date.now();
 
   const args = [
-    '--dangerously-skip-permissions',
+    ...(SKIP_PERMISSIONS ? ['--dangerously-skip-permissions'] : []),
     '-p', fullPrompt,
     '--model', CLAUDE_MODEL
   ];
@@ -241,7 +246,8 @@ function runClaudeOnce({ fullPrompt, callId, timestamp }) {
       shell: false,
       // Agent folder (CLAUDE.md, .claude/settings.json) when run as container
       cwd: process.env.CLAUDE_WORKDIR || process.cwd(),
-      env: claudeEnv
+      // Caller's extension for agent tools (e.g. ha helper rules per caller)
+      env: caller ? { ...claudeEnv, CLAUDE_PHONE_CALLER: String(caller) } : claudeEnv
     });
 
     let stdout = '';
@@ -327,7 +333,7 @@ app.use((req, res, next) => {
  *   - This allows each device (NAS, Proxmox, etc.) to have its own identity and skills
  */
 app.post('/ask', async (req, res) => {
-  const { prompt, callId, devicePrompt } = req.body;
+  const { prompt, callId, devicePrompt, caller } = req.body;
   const startTime = Date.now();
   const timestamp = new Date().toISOString();
 
@@ -362,7 +368,7 @@ app.post('/ask', async (req, res) => {
     fullPrompt += VOICE_CONTEXT;
     fullPrompt += prompt;
 
-    const { code, stdout, stderr, duration_ms } = await runClaudeOnce({ fullPrompt, callId, timestamp });
+    const { code, stdout, stderr, duration_ms } = await runClaudeOnce({ fullPrompt, callId, caller, timestamp });
 
     if (code !== 0) {
       console.error(`[${new Date().toISOString()}] ERROR: Claude CLI exited with code ${code}`);

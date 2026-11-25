@@ -1,0 +1,173 @@
+#!/usr/bin/env node
+/**
+ * ha – the phone agent's only door to Home Assistant.
+ *
+ * Every read and every action is checked against ../permissions.json:
+ *   read     entity patterns that may be read ("*" = wildcard)
+ *   write    entity patterns that may be switched, optional value limits
+ *            per service field, e.g. { "temperature": [16, 24] }
+ *   confirm  entity patterns that need --confirmed (caller said yes)
+ *   callers  entity patterns only allowed for certain caller extensions
+ *            (from CLAUDE_PHONE_CALLER, set by claude-api-server per call)
+ *
+ * Usage:
+ *   ha list [filter]                         readable entities with state
+ *   ha get <entity_id>                       state + attributes
+ *   ha call <domain.service> <entity_id> [field=value ...] [--confirmed]
+ *   ha items <todo.entity>                   items of a to-do list
+ *   ha events <calendar.entity> [days]       upcoming calendar events
+ *
+ * Needs HA_URL and HA_TOKEN in the environment.
+ */
+
+const fs = require('fs');
+const path = require('path');
+
+const PERMISSIONS_FILE = path.join(__dirname, '..', 'permissions.json');
+const { HA_URL, HA_TOKEN, CLAUDE_PHONE_CALLER } = process.env;
+
+function fail(msg) {
+  console.error('ha: ' + msg);
+  process.exit(1);
+}
+
+function loadPermissions() {
+  try {
+    return JSON.parse(fs.readFileSync(PERMISSIONS_FILE, 'utf8'));
+  } catch (err) {
+    fail('permissions.json nicht lesbar: ' + err.message);
+  }
+}
+
+function globToRegex(pattern) {
+  const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+  return new RegExp('^' + escaped + '$');
+}
+
+/** First matching key of a pattern list/object, or null */
+function match(entity, patterns) {
+  const list = Array.isArray(patterns) ? patterns : Object.keys(patterns || {});
+  return list.find((p) => globToRegex(p).test(entity)) || null;
+}
+
+async function api(method, urlPath, body) {
+  if (!HA_URL || !HA_TOKEN) fail('HA_URL oder HA_TOKEN fehlt');
+  const res = await fetch(HA_URL.replace(/\/$/, '') + urlPath, {
+    method,
+    headers: { Authorization: 'Bearer ' + HA_TOKEN, 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(15000)
+  });
+  if (!res.ok) fail(`Home Assistant antwortet mit HTTP ${res.status}`);
+  return res.json();
+}
+
+function canRead(perm, entity) {
+  return match(entity, perm.read) || match(entity, perm.write) || match(entity, perm.confirm) || match(entity, perm.callers);
+}
+
+function brief(s) {
+  const a = s.attributes || {};
+  const unit = a.unit_of_measurement ? ' ' + a.unit_of_measurement : '';
+  return `${s.entity_id}\t${a.friendly_name || ''}\t${s.state}${unit}`;
+}
+
+function parseValue(v) {
+  if (v === 'true') return true;
+  if (v === 'false') return false;
+  return v !== '' && !isNaN(Number(v)) ? Number(v) : v;
+}
+
+async function cmdList(perm, filter) {
+  const states = await api('GET', '/api/states');
+  const rows = states
+    .filter((s) => canRead(perm, s.entity_id))
+    .filter((s) => !filter || (s.entity_id + ' ' + (s.attributes.friendly_name || '')).toLowerCase().includes(filter.toLowerCase()))
+    .map(brief);
+  console.log(rows.length ? rows.join('\n') : '(keine passenden Entitäten)');
+}
+
+async function cmdGet(perm, entity) {
+  if (!entity) fail('ha get <entity_id>');
+  if (!canRead(perm, entity)) fail(`${entity} darf nicht gelesen werden`);
+  const s = await api('GET', '/api/states/' + encodeURIComponent(entity));
+  console.log(JSON.stringify({ entity_id: s.entity_id, state: s.state, attributes: s.attributes, last_changed: s.last_changed }, null, 2));
+}
+
+async function cmdCall(perm, service, entity, rest) {
+  if (!service || !entity || !service.includes('.')) {
+    fail('ha call <domain.service> <entity_id> [feld=wert ...] [--confirmed]');
+  }
+  const confirmed = rest.includes('--confirmed');
+  const fields = {};
+  for (const arg of rest.filter((a) => a !== '--confirmed')) {
+    const i = arg.indexOf('=');
+    if (i < 1) fail('Feld bitte als feld=wert angeben: ' + arg);
+    fields[arg.slice(0, i)] = parseValue(arg.slice(i + 1));
+  }
+
+  const writeKey = match(entity, perm.write);
+  const confirmKey = match(entity, perm.confirm);
+  const callerKey = match(entity, perm.callers);
+  if (!writeKey && !confirmKey && !callerKey) fail(`${entity} darf nicht geschaltet werden`);
+
+  // Only for certain callers (e.g. a flatmate's own room)
+  if (callerKey) {
+    const allowed = perm.callers[callerKey].map(String);
+    if (!allowed.includes(String(CLAUDE_PHONE_CALLER))) {
+      fail(`${entity} darf nur von Nebenstelle ${allowed.join('/')} geschaltet werden (Anrufer: ${CLAUDE_PHONE_CALLER || 'unbekannt'})`);
+    }
+  }
+  if (confirmKey && !confirmed) {
+    fail(`${entity} braucht eine Rückfrage beim Anrufer. Erst fragen, dann mit --confirmed aufrufen.`);
+  }
+
+  // Value limits, e.g. temperature 16–24, volume_level 0–0.5
+  const limits = (writeKey && perm.write[writeKey]) || {};
+  for (const [field, range] of Object.entries(limits)) {
+    if (!(field in fields)) continue;
+    const v = Number(fields[field]);
+    if (isNaN(v) || v < range[0] || v > range[1]) {
+      fail(`${field}=${fields[field]} ist nicht erlaubt (erlaubt: ${range[0]} bis ${range[1]})`);
+    }
+  }
+
+  const [domain, svc] = service.split('.');
+  await api('POST', `/api/services/${domain}/${svc}`, { entity_id: entity, ...fields });
+  console.log(`ok: ${service} ${entity} ${JSON.stringify(fields)}`);
+}
+
+async function cmdItems(perm, entity) {
+  if (!entity || !entity.startsWith('todo.')) fail('ha items <todo.entity>');
+  if (!canRead(perm, entity)) fail(`${entity} darf nicht gelesen werden`);
+  const res = await api('POST', '/api/services/todo/get_items?return_response', { entity_id: entity });
+  const items = ((res.service_response || {})[entity] || {}).items || [];
+  console.log(items.length ? items.map((i) => `- ${i.summary}${i.status === 'completed' ? ' (erledigt)' : ''}`).join('\n') : '(leer)');
+}
+
+async function cmdEvents(perm, entity, days) {
+  if (!entity || !entity.startsWith('calendar.')) fail('ha events <calendar.entity> [tage]');
+  if (!canRead(perm, entity)) fail(`${entity} darf nicht gelesen werden`);
+  const start = new Date();
+  const end = new Date(start.getTime() + (Number(days) || 7) * 86400000);
+  const events = await api('GET', `/api/calendars/${encodeURIComponent(entity)}?start=${start.toISOString()}&end=${end.toISOString()}`);
+  console.log(events.length
+    ? events.map((e) => `${(e.start.dateTime || e.start.date)}\t${e.summary}`).join('\n')
+    : '(keine Termine)');
+}
+
+async function main() {
+  const [cmd, ...args] = process.argv.slice(2);
+  const perm = loadPermissions();
+  switch (cmd) {
+    case 'list': return cmdList(perm, args[0]);
+    case 'get': return cmdGet(perm, args[0]);
+    case 'call': return cmdCall(perm, args[0], args[1], args.slice(2));
+    case 'items': return cmdItems(perm, args[0]);
+    case 'events': return cmdEvents(perm, args[0], args[1]);
+    default:
+      console.log(fs.readFileSync(__filename, 'utf8').split('\n').slice(13, 20).map((l) => l.replace(/^ \* ?/, '')).join('\n'));
+  }
+}
+
+main().catch((err) => fail(err.cause ? err.cause.code || err.message : err.message));

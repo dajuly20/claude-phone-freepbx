@@ -46,9 +46,10 @@ async function agentReady(call, device) {
 /** type: claude – plain conversation with one agent */
 async function handleClaude(call, device) {
   if (!(await agentReady(call, device))) return;
+  const callerLine = call.callerId ? '[ANRUFER] Nebenstelle ' + call.callerId : '[ANRUFER] unbekannt';
   await call.converse(device.agent, {
     greeting: device.greeting || 'Hallo! Hier ist ' + device.name + '. Wie kann ich dir helfen?',
-    devicePrompt: device.prompt,
+    devicePrompt: [device.prompt || '', callerLine].join('\n'),
     timeout: device.timeout || 60
   });
 }

@@ -75,6 +75,14 @@ configs:
           # später:  type: claude
           #          agent: http://127.0.0.1:3402   (→ Service agent-netzwerk)
 
+        "703":
+          name: Home Assistant
+          type: claude
+          agent: http://127.0.0.1:3403          # → Service agent-homeassistant
+          password: ${EXT_703_PASSWORD}
+          description: Haussteuerung – Licht, Heizung, Rollos, Temperaturen, Einkaufsliste
+          greeting: Haussteuerung, hallo! Was kann ich für dich tun?
+
       # ── Weitere Ziele für die Vermittlung (normale Telefone etc.) ───────
       #  Werden nicht registriert, nur von 700 als Durchstell-Ziel genannt.
       directory: {}
@@ -152,6 +160,31 @@ services:
     ports:
       - "127.0.0.1:3401:3333"
     healthcheck:                         # "unhealthy", wenn der Claude-Zugang nicht klappt
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3333/health"]
+      interval: 60s
+      timeout: 15s
+      start_period: 20s
+      retries: 2
+
+  agent-homeassistant:                   # Nebenstelle 703
+    build:
+      context: .
+      dockerfile: claude-agent/Dockerfile
+    restart: unless-stopped
+    environment:
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      CLAUDE_MODEL: claude-haiku-5-5
+      # Harte Grenze: nur Werkzeuge aus agents/homeassistant/.claude/settings.json
+      # (also nur bin/ha), das wiederum nur, was permissions.json erlaubt
+      CLAUDE_SKIP_PERMISSIONS: "false"
+      HA_URL: ${HA_URL:-http://ha.mrz.ip}
+      HA_TOKEN: ${HA_TOKEN:-}
+    volumes:
+      - ./agents/homeassistant:/agent:ro
+    ports:
+      - "127.0.0.1:3403:3333"
+    healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3333/health"]
       interval: 60s
       timeout: 15s

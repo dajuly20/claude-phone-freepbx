@@ -25,6 +25,7 @@ Unterschiede zum Original:
 | **700** | Vermittlung | `operator` | Claude (Haiku, Container `agent-vermittlung`) fragt, wohin der Anruf soll, und stellt durch |
 | **701** | Julians Rechner | `host` | Prüft den Laptop. Läuft er, landest du bei Claude Code auf dem Laptop. Ist er aus, bietet 701 Wake-on-LAN an |
 | **702** | Netzwerk-Agent | `placeholder` | Sagt im Moment nur „noch nicht eingerichtet“ |
+| **703** | Home Assistant | `claude` | Haussteuerung (Container `agent-homeassistant`). Darf nur, was `agents/homeassistant/permissions.json` erlaubt |
 
 ## Architektur
 

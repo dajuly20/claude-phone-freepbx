@@ -18,7 +18,7 @@ const CLAUDE_API_URL = process.env.CLAUDE_API_URL || 'http://localhost:3333';
  * @returns {Promise<string>} Claude's response
  */
 async function query(prompt, options = {}) {
-  const { callId, devicePrompt, timeout = 30, apiUrl = CLAUDE_API_URL } = options; // AC27: Default 30s timeout
+  const { callId, caller, devicePrompt, timeout = 30, apiUrl = CLAUDE_API_URL } = options; // AC27: Default 30s timeout
   const timestamp = new Date().toISOString();
 
   try {
@@ -32,7 +32,7 @@ async function query(prompt, options = {}) {
 
     const response = await axios.post(
       `${apiUrl}/ask`,
-      { prompt, callId, devicePrompt },
+      { prompt, callId, caller, devicePrompt },
       {
         timeout: timeout * 1000,
         headers: { 'Content-Type': 'application/json' }

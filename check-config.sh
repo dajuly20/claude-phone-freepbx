@@ -45,6 +45,13 @@ SETTINGS=(
   "ANTHROPIC_API_KEY|secret|Anthropic-API-Key (https://console.anthropic.com/settings/keys) – ODER Token unten"
   "CLAUDE_CODE_OAUTH_TOKEN|secret|Claude-Abo-Token (claude setup-token) – ODER API-Key oben"
 )
+# Home Assistant nur, wenn ein Agent es nutzt
+if grep -q 'HA_TOKEN' docker-compose.yml; then
+  SETTINGS+=(
+    "HA_URL|text|Adresse von Home Assistant, z.B. http://ha.mrz.ip"
+    "HA_TOKEN|secret|Langlebiges Token des HA-Benutzers claude-phone (Profil → Sicherheit)"
+  )
+fi
 # Nebenstellen-Passwörter aus dem Telefonbuch in docker-compose.yml
 while read -r v; do
   SETTINGS+=("$v|secret|PJSIP-Secret von Nebenstelle ${v//[!0-9]/} (FreePBX)")
@@ -204,6 +211,24 @@ run_checks() {
         000) warn "api.elevenlabs.io nicht erreichbar" ;;
         *) warn "ElevenLabs: unerwartete Antwort (HTTP $HTTP_CODE)" ;;
       esac
+    fi
+  fi
+
+  local hat=${ENV[HA_TOKEN]:-} hau=${ENV[HA_URL]:-}
+  if (( ONLINE )) && [[ -n $hat && -n $hau ]]; then
+    section "Home Assistant"
+    http_get "${hau%/}/api/" "Authorization: Bearer $hat"
+    case $HTTP_CODE in
+      200) ok "HA_TOKEN gültig ($hau)" ;;
+      401|403) fail "HA_TOKEN wird von $hau abgelehnt" HA_TOKEN ;;
+      000) fail "Home Assistant unter $hau nicht erreichbar" HA_URL ;;
+      *) warn "Home Assistant: unerwartete Antwort (HTTP $HTTP_CODE)" ;;
+    esac
+    if [[ $HTTP_CODE == 200 ]]; then
+      local perm=agents/homeassistant/permissions.json
+      if [[ -f $perm ]] && [[ $(jq '(.read|length) + (.write|length) + (.confirm|length)' "$perm" 2>/dev/null) == 0 ]]; then
+        warn "$perm ist noch leer – Nebenstelle 703 darf nichts lesen oder schalten"
+      fi
     fi
   fi
 

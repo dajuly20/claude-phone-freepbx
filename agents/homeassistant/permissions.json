@@ -1,0 +1,7 @@
+{
+  "_hinweis": "Platzhalter – wird aus /config/docs/claude_phone_ha.md (Home Assistant) befüllt. Solange leer, darf der Agent nichts.",
+  "read": [],
+  "write": {},
+  "confirm": {},
+  "callers": {}
+}
