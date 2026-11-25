@@ -17,6 +17,7 @@ const express = require('express');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const {
   buildQueryContext,
   buildStructuredPrompt,
@@ -93,9 +94,13 @@ function buildClaudeEnvironment() {
     CLAUDE_CODE_ENTRYPOINT: 'cli',
   };
 
-  // CRITICAL: Remove ANTHROPIC_API_KEY so Claude CLI uses subscription auth
+  // Remove ANTHROPIC_API_KEY so Claude CLI uses subscription auth, unless it is
+  // a real key and no subscription token is given (agent containers with API key).
   // If ANTHROPIC_API_KEY is set (even to placeholder), CLI tries API auth instead
-  delete env.ANTHROPIC_API_KEY;
+  const apiKey = env.ANTHROPIC_API_KEY || '';
+  if (!apiKey.startsWith('sk-ant-') || env.CLAUDE_CODE_OAUTH_TOKEN) {
+    delete env.ANTHROPIC_API_KEY;
+  }
 
   return env;
 }
@@ -145,6 +150,14 @@ function parseClaudeStdout(stdout) {
   return { response, sessionId };
 }
 
+// Claude CLI only accepts UUIDs as session IDs; derive a stable one otherwise
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function toSessionUuid(id) {
+  if (UUID_RE.test(id)) return id;
+  const h = crypto.createHash('sha1').update(String(id)).digest('hex');
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-a${h.slice(17, 20)}-${h.slice(20, 32)}`;
+}
+
 function runClaudeOnce({ fullPrompt, callId, timestamp }) {
   const startTime = Date.now();
 
@@ -155,11 +168,12 @@ function runClaudeOnce({ fullPrompt, callId, timestamp }) {
   ];
 
   if (callId) {
+    const sessionUuid = toSessionUuid(callId);
     if (sessions.has(callId)) {
-      args.push('--resume', callId);
+      args.push('--resume', sessionUuid);
       console.log(`[${timestamp}] Resuming session: ${callId}`);
     } else {
-      args.push('--session-id', callId);
+      args.push('--session-id', sessionUuid);
       sessions.set(callId, true);
       console.log(`[${timestamp}] Starting new session: ${callId}`);
     }
