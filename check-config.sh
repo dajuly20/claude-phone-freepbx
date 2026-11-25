@@ -246,10 +246,12 @@ run_checks() {
     esac
     if [[ $HTTP_CODE == 200 && ${ENV[STT_PROVIDER]:-openai} == homeassistant ]]; then
       # 0,3 s Stille an die STT-API: HTTP 200 heißt, Provider und Token passen
-      local sttp=${ENV[HA_STT_PROVIDER]:-stt.home_assistant_cloud} scode
-      scode=$(python3 -c 'import sys,wave; w=wave.open(sys.stdout.buffer,"wb"); w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000); w.writeframes(bytes(9600)); w.close()' \
-        | printf 'Authorization: Bearer %s\nContent-Type: audio/wav\nX-Speech-Content: format=wav; codec=pcm; sample_rate=16000; bit_rate=16; channel=1; language=de-DE\n' "$hat" \
-        | curl -s -o /dev/null -m 20 -w '%{http_code}' -H @- --data-binary @- "${hau%/}/api/stt/$sttp" 2>/dev/null)
+      local sttp=${ENV[HA_STT_PROVIDER]:-stt.home_assistant_cloud} scode wav
+      wav=$(mktemp --suffix=.wav)
+      python3 -c 'import sys,wave; w=wave.open(sys.argv[1],"wb"); w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000); w.writeframes(bytes(9600)); w.close()' "$wav"
+      scode=$(printf 'Authorization: Bearer %s\nContent-Type: audio/wav\nX-Speech-Content: format=wav; codec=pcm; sample_rate=16000; bit_rate=16; channel=1; language=de-DE\n' "$hat" \
+        | curl -s -o /dev/null -m 20 -w '%{http_code}' -H @- --data-binary "@$wav" "${hau%/}/api/stt/$sttp" 2>/dev/null)
+      rm -f "$wav"
       [[ $scode == 200 ]] && ok "Spracherkennung über Home Assistant ($sttp) erreichbar" \
         || fail "Spracherkennung $sttp antwortet mit HTTP ${scode:-000}" HA_STT_PROVIDER
     fi
