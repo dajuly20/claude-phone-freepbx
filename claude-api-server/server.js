@@ -219,11 +219,19 @@ function toSessionUuid(id) {
 // and denies everything else – a hard boundary for agents with real powers.
 const SKIP_PERMISSIONS = process.env.CLAUDE_SKIP_PERMISSIONS !== 'false';
 
+// Claude Code does not pick up .claude/settings.json from a plain (non-git)
+// agent folder, so pass it explicitly – otherwise allow/deny rules are ignored.
+const AGENT_SETTINGS = path.join(process.env.CLAUDE_WORKDIR || process.cwd(), '.claude', 'settings.json');
+const SETTINGS_ARGS = fs.existsSync(AGENT_SETTINGS) ? ['--settings', AGENT_SETTINGS] : [];
+console.log('[STARTUP] Permissions:', SKIP_PERMISSIONS ? 'skip (deny rules only)' : 'allow list only',
+  SETTINGS_ARGS.length ? '– settings ' + AGENT_SETTINGS : '– no settings file');
+
 function runClaudeOnce({ fullPrompt, callId, caller, timestamp }) {
   const startTime = Date.now();
 
   const args = [
     ...(SKIP_PERMISSIONS ? ['--dangerously-skip-permissions'] : []),
+    ...SETTINGS_ARGS,
     '-p', fullPrompt,
     '--model', CLAUDE_MODEL
   ];
