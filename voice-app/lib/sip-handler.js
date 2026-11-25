@@ -63,6 +63,22 @@ function stripVideoFromSdp(sdp) {
 }
 
 /**
+ * Caller details the PBX adds to every call to the agents:
+ * X-PBX-Caller-Ext / -Person / -Name / -Geraet / -Ort (URL-encoded).
+ * @returns {object|null} { ext, person, name, geraet, ort } or null without headers
+ */
+function extractPbxCaller(req) {
+  const get = (h) => {
+    const v = req.get(h);
+    if (!v) return '';
+    try { return decodeURIComponent(String(v).replace(/\+/g, ' ')).trim(); } catch (e) { return String(v).trim(); }
+  };
+  const info = { ext: get('X-PBX-Caller-Ext'), person: get('X-PBX-Caller-Person'), name: get('X-PBX-Caller-Name'),
+    geraet: get('X-PBX-Caller-Geraet'), ort: get('X-PBX-Caller-Ort') };
+  return Object.values(info).some(Boolean) ? info : null;
+}
+
+/**
  * Handle incoming SIP INVITE
  */
 async function handleInvite(req, res, options) {
@@ -70,6 +86,7 @@ async function handleInvite(req, res, options) {
 
   const callerId = extractCallerId(req);
   const dialedExt = extractDialedExtension(req);
+  const pbxCaller = extractPbxCaller(req);
 
   // Look up device config using deviceRegistry.get() (works with name OR extension)
   let deviceConfig = null;
@@ -87,7 +104,8 @@ async function handleInvite(req, res, options) {
     }
   }
 
-  console.log('[' + new Date().toISOString() + '] CALL Incoming from: ' + callerId + ' to ext: ' + (dialedExt || 'unknown'));
+  console.log('[' + new Date().toISOString() + '] CALL Incoming from: ' + callerId + ' to ext: ' + (dialedExt || 'unknown') +
+    (pbxCaller ? ' – PBX: ' + JSON.stringify(pbxCaller) : ''));
 
   try {
     // Strip video from SDP to avoid FreeSWITCH 488 error with unsupported video codecs
@@ -108,7 +126,7 @@ async function handleInvite(req, res, options) {
       if (endpoint) endpoint.destroy().catch(function() {});
     });
 
-    const call = new CallSession({ endpoint, dialog, callUuid, callerId, options, device: deviceConfig });
+    const call = new CallSession({ endpoint, dialog, callUuid, callerId, pbxCaller, options, device: deviceConfig });
     try {
       await runExtension(call, deviceConfig, options);
     } catch (err) {
@@ -129,5 +147,6 @@ async function handleInvite(req, res, options) {
 module.exports = {
   handleInvite: handleInvite,
   extractCallerId: extractCallerId,
+  extractPbxCaller: extractPbxCaller,
   extractDialedExtension: extractDialedExtension
 };

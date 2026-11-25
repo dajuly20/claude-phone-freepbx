@@ -33,6 +33,38 @@ const THINKING_PHRASES = [
   "Ich durchsuche mein Gehirn...",
 ];
 
+const TRANSFER_NOTIFY_MS = 8000;
+
+/**
+ * Wait for the final status of a REFER (NOTIFY with message/sipfrag).
+ * Resolves {code, reason}; dialog ending counts as success (PBX took the
+ * caller); null if nothing final arrives in time.
+ */
+function waitForReferOutcome(dialog, timeoutMs) {
+  let done = false;
+  let finish;
+  const promise = new Promise((resolve) => {
+    const onNotify = (req, res) => {
+      try { res.send(200); } catch (e) {}
+      const m = /SIP\/2\.0\s+(\d{3})\s*([^\r\n]*)/.exec(String(req.body || ''));
+      if (m && Number(m[1]) >= 200) finish({ code: Number(m[1]), reason: m[2].trim() });
+    };
+    const onDestroy = () => finish({ code: 200, reason: 'dialog ended' });
+    const timer = setTimeout(() => finish(null), timeoutMs);
+    finish = (r) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      dialog.off('notify', onNotify);
+      dialog.off('destroy', onDestroy);
+      resolve(r);
+    };
+    dialog.on('notify', onNotify);
+    dialog.on('destroy', onDestroy);
+  });
+  return { promise, cancel: () => finish(null) };
+}
+
 function log(msg) {
   console.log('[' + new Date().toISOString() + '] ' + msg);
 }
@@ -101,11 +133,12 @@ function extractVoiceLine(response) {
 }
 
 class CallSession {
-  constructor({ endpoint, dialog, callUuid, callerId, options, device }) {
+  constructor({ endpoint, dialog, callUuid, callerId, pbxCaller, options, device }) {
     this.endpoint = endpoint;
     this.dialog = dialog;
     this.callUuid = callUuid;
     this.callerId = callerId || null;
+    this.pbxCaller = pbxCaller || null; // X-PBX-Caller-* headers (see sip-handler)
     this.options = options;
     this.device = device;
     this.voiceId = (device && device.voiceId) || DEFAULT_VOICE_ID;
@@ -312,6 +345,11 @@ class CallSession {
     const referTo = '<sip:' + target + '@' + domain + '>';
     log('TRANSFER ' + this.callUuid + ' -> ' + referTo);
 
+    // The PBX accepts the REFER (202) first and reports the real outcome by
+    // NOTIFY (message/sipfrag), e.g. "SIP/2.0 404 Not Found" if the target
+    // does not exist. Listen before sending, NOTIFY can come back at once.
+    const outcome = waitForReferOutcome(this.dialog, TRANSFER_NOTIFY_MS);
+
     const res = await this.dialog.request({
       method: 'REFER',
       headers: {
@@ -320,11 +358,20 @@ class CallSession {
       }
     });
     if (res.status !== 202 && res.status !== 200) {
+      outcome.cancel();
       throw new Error('REFER rejected: ' + res.status + ' ' + res.reason);
     }
-    // Give the PBX time to pick up the caller before we tear down
-    await sleep(5000);
+    const result = await outcome.promise;
+    log('TRANSFER ' + this.callUuid + ' outcome: ' + (result ? result.code + ' ' + result.reason : 'no final NOTIFY'));
+    if (result && result.code >= 300) {
+      const err = new Error('Transfer failed at PBX: ' + result.code + ' ' + result.reason);
+      err.sipStatus = result.code;
+      throw err;
+    }
+    // Give the PBX time to take over the caller (it hangs up our leg)
+    if (this.active) await Promise.race([sleep(5000), new Promise(r => this.dialog.once('destroy', r))]);
   }
+
 
   async close() {
     for (const apiUrl of this.usedApis) {
@@ -337,4 +384,4 @@ class CallSession {
   }
 }
 
-module.exports = { CallSession, extractVoiceLine, isGoodbye, parseYesNo, sleep };
+module.exports = { CallSession, waitForReferOutcome, extractVoiceLine, isGoodbye, parseYesNo, sleep };

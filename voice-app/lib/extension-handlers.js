@@ -51,8 +51,19 @@ async function agentReady(call, device) {
  * external caller – the latter identified by name from Julian's address book.
  * @returns {{line: string, owner: boolean, name: string}}
  */
-function identifyCaller(callerId) {
+function identifyCaller(callerId, pbxCaller) {
   const id = callerId && callerId !== 'unknown' ? String(callerId) : '';
+  // Internal call with details from the PBX (X-PBX-Caller-* headers)
+  if (pbxCaller && (pbxCaller.ext || pbxCaller.person || pbxCaller.ort)) {
+    const ext = pbxCaller.ext || id;
+    const ownerPerson = (process.env.OWNER_PERSON || 'julian').toLowerCase();
+    const owner = (pbxCaller.person && pbxCaller.person.toLowerCase() === ownerPerson) || contacts.isOwner(ext);
+    const name = pbxCaller.person ? (pbxCaller.name || pbxCaller.person) : '';
+    const details = [name || 'Gemeinschaftstelefon', pbxCaller.geraet && 'Gerät: ' + pbxCaller.geraet,
+      pbxCaller.ort && 'Ort: ' + pbxCaller.ort].filter(Boolean).join(', ');
+    return { owner, name, extension: ext, geraet: pbxCaller.geraet || '', ort: pbxCaller.ort || '',
+      line: '[ANRUFER] Nebenstelle ' + ext + ' – ' + details + ' (laut Telefonanlage).' };
+  }
   if (contacts.isOwner(id)) {
     return { owner: true, name: 'Julian',
       line: '[ANRUFER] Julian (über seine Rufnummer ' + id + ' erkannt).' };
@@ -87,19 +98,29 @@ function addressBookPrompt(transcript) {
  * Operator greeting: by name if we know the caller, otherwise name the
  * extension so the caller hears where the call comes from ("4 0 1", digit by digit).
  */
+const OPERATOR_QUESTION = 'Möchtest du mit einer bestimmten Person sprechen, oder etwas aus dem Hauptmenü – ' +
+  'Personen, St. Georgen, Durchsage, Mailbox, Home Assistant oder Konferenzraum?';
+
 function operatorGreeting(caller) {
-  if (caller.name) return 'Vermittlung, guten Tag ' + caller.name + '. Mit wem darf ich dich verbinden?';
-  if (caller.extension) {
-    return 'Vermittlung, guten Tag. Du rufst von Nebenstelle ' + caller.extension.split('').join(' ') +
-      ' an. Mit wem darf ich dich verbinden?';
-  }
-  return 'Vermittlung, guten Tag. Mit wem darf ich dich verbinden?';
+  const hallo = caller.name ? 'Hallo ' + caller.name + ', ' : 'Hallo, ';
+  let wo = '';
+  if (caller.geraet && caller.ort) wo = 'du rufst vom ' + caller.geraet + ' an – ' + caller.ort + '.';
+  else if (caller.ort) wo = 'du rufst vom ' + caller.ort + ' an.';
+  else if (caller.geraet) wo = 'du rufst vom ' + caller.geraet + ' an.';
+  else if (caller.extension) wo = 'du rufst von Nebenstelle ' + spokenDigits(caller.extension) + ' an.';
+  if (!wo) return (caller.name ? 'Hallo ' + caller.name + '. ' : 'Vermittlung, guten Tag. ') + OPERATOR_QUESTION;
+  return hallo + wo + ' ' + OPERATOR_QUESTION;
+}
+
+/** "228" → "2 2 8", "*1" → "Stern 1" – numbers to dial, read digit by digit */
+function spokenDigits(nummer) {
+  return String(nummer).split('').map(c => (c === '*' ? 'Stern' : c === '#' ? 'Raute' : c)).join(' ');
 }
 
 /** type: claude – plain conversation with one agent */
 async function handleClaude(call, device) {
   if (!(await agentReady(call, device))) return;
-  const callerLine = identifyCaller(call.callerId).line;
+  const callerLine = identifyCaller(call.callerId, call.pbxCaller).line;
   await call.converse(device.agent, {
     greeting: device.greeting || 'Hallo! Hier ist ' + device.name + '. Wie kann ich dir helfen?',
     devicePrompt: [device.prompt || '', callerLine].join('\n'),
@@ -156,7 +177,7 @@ async function handleOperator(call, device, ctx) {
   if (!(await agentReady(call, device))) return;
 
   const pbx = await pbxDirectory.fetchDirectory();
-  const caller = identifyCaller(call.callerId);
+  const caller = identifyCaller(call.callerId, call.pbxCaller);
   const directory = pbxDirectory.buildText(
     pbx, ctx.deviceRegistry.getAll(), ctx.deviceRegistry.getDirectory(), device.extension);
 
@@ -183,7 +204,8 @@ async function handleOperator(call, device, ctx) {
       log('TRANSFER failed: ' + err.message);
       transferring = false;
       call.handedOff = false;
-      await call.say('Das Durchstellen hat leider nicht geklappt.');
+      // Never hang up on a failed transfer – tell the caller what to dial instead
+      await call.say('Durchstellen klappt gerade nicht – wähl bitte selbst die ' + spokenDigits(target) + '.');
       return false;
     }
   }
@@ -305,7 +327,7 @@ async function handleHost(call, device) {
 
   await call.converse(apiUrl, {
     greeting: device.greeting || 'Hier ist Claude auf ' + hostName + '. Was kann ich tun?',
-    devicePrompt: device.prompt,
+    devicePrompt: [device.prompt || '', identifyCaller(call.callerId, call.pbxCaller).line].join('\n'),
     timeout: device.timeout || 120
   });
 }
@@ -323,5 +345,5 @@ async function runExtension(call, device, ctx) {
   await handler(call, device, ctx);
 }
 
-module.exports = { runExtension, TRANSFER_RE, identifyCaller, addressBookPrompt, operatorGreeting,
+module.exports = { runExtension, TRANSFER_RE, identifyCaller, addressBookPrompt, operatorGreeting, spokenDigits,
   matchKeyword, operatorSilenceText, OPERATOR_KEYWORDS };

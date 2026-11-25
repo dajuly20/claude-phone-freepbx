@@ -93,9 +93,9 @@ test('missing file: identification just off, no crash', () => {
 
 test('operator greeting: name, else extension digit by digit, else plain', () => {
   const { operatorGreeting } = require('../lib/extension-handlers');
-  assert.match(operatorGreeting({ name: 'Julian' }), /guten Tag Julian\./);
+  assert.match(operatorGreeting({ name: 'Julian' }), /^Hallo Julian\. Möchtest du mit einer bestimmten Person/);
   assert.match(operatorGreeting({ name: '', extension: '402' }), /Nebenstelle 4 0 2 an\./);
-  assert.strictEqual(operatorGreeting({ name: '' }), 'Vermittlung, guten Tag. Mit wem darf ich dich verbinden?');
+  assert.match(operatorGreeting({ name: '' }), /^Vermittlung, guten Tag\. Möchtest du/);
 });
 
 test('operator keywords: only a bare keyword goes straight through', () => {
