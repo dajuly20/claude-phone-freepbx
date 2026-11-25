@@ -51,3 +51,33 @@ test('expired watch is dropped without call', async () => {
   assert.strictEqual(cw.watches.size, 0);
   cw._reset();
 });
+
+test('timer callback fires when due; any number allowed', async () => {
+  const calls = setupFake(['x']);
+  const w = cw.add({ to: '0761 12345', message: 'Erinnerung', minutes: 10 });
+  assert.strictEqual(w.to, '076112345');
+  await cw.pollAll();
+  assert.strictEqual(calls.length, 0);
+  w.due = Date.now() - 1;
+  await cw.pollAll();
+  assert.strictEqual(calls.length, 1);
+  assert.throws(() => cw.add({ to: '+49 170 1234567', message: 'm', minutes: 99999 }), /7 Tage/);
+  assert.throws(() => cw.add({ to: '502', message: 'm' }), /entity oder minutes/);
+  cw._reset();
+});
+
+test('⏰ RÜCKRUF lines from any agent are scheduled, default number = caller', () => {
+  setupFake(['x']);
+  const { scheduleCallbacks } = require('../lib/call-session');
+  const r = scheduleCallbacks([
+    '🗣️ VOICE_RESPONSE: Mach ich.',
+    '⏰ RÜCKRUF: {"in_minuten":10,"ansage":"Zehn Minuten sind um."}',
+    '⏰ RÜCKRUF: {"an":"24","um":"19:30","ansage":"Julian lässt ausrichten: Essen ist fertig."}',
+    '⏰ RÜCKRUF: {"an":"24","ansage":"ohne Zeit"}'
+  ].join('\n'), { callerId: '502', device: '700' });
+  assert.strictEqual(r.ok, 2);
+  assert.strictEqual(r.failed.length, 1);
+  const tos = [...cw.watches.values()].map(w => w.to).sort();
+  assert.deepStrictEqual(tos, ['24', '502']);
+  cw._reset();
+});

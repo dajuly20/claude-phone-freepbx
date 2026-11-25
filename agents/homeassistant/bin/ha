@@ -17,8 +17,8 @@
  *   ha call <domain.service> <entity_id> [field=value ...] [--confirmed]
  *   ha items <todo.entity>                   items of a to-do list
  *   ha events <calendar.entity> [days]       upcoming calendar events
- *   ha rueckruf <entity> <wert[,wert]> "<Ansage>" [--attribut <name>] [--stunden <h>]
- *                                            call the caller back as soon as the entity
+ *   ha rueckruf <entity> <wert[,wert]> "<Ansage>" [--attribut <name>] [--stunden <h>] [--an <nummer>]
+ *                                            call back (caller or --an) as soon as the entity
  *                                            (or attribute) changes into one of the values
  *   ha assist "<Auftrag>" [--conv <id>]      hand the request to Home Assistant's
  *                                            Assist agent – same exposed entities and
@@ -218,31 +218,33 @@ async function cmdAssist(args) {
 }
 
 /**
- * Ask the voice-app to call the current caller back when an entity changes
- * into one of the given values. Only ever calls the caller's own extension.
+ * Ask the voice-app to call back (the caller, or --an <nummer>) when an
+ * entity changes into one of the given values.
  */
 async function cmdRueckruf(perm, args) {
-  const opts = { attribut: '', stunden: 3 };
+  const opts = { attribut: '', stunden: 3, an: '' };
   const pos = [];
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--attribut') opts.attribut = args[++i];
     else if (args[i] === '--stunden') opts.stunden = Number(args[++i]);
+    else if (args[i] === '--an') opts.an = args[++i];
     else pos.push(args[i]);
   }
   const [entity, werte, ...ansage] = pos;
   if (!entity || !werte || !ansage.length) fail('ha rueckruf <entity> <wert[,wert]> "<Ansage>" [--attribut <name>] [--stunden <h>]');
   if (!canRead(perm, entity)) fail(`${entity} darf nicht gelesen werden`);
-  if (!CLAUDE_PHONE_CALLER || !/^\+?[0-9]{2,20}$/.test(CLAUDE_PHONE_CALLER)) fail('Nummer des Anrufers unbekannt – kein Rückruf möglich');
+  const to = opts.an || CLAUDE_PHONE_CALLER;
+  if (!to) fail('Nummer unbekannt – mit --an <nummer> angeben');
   const base = (process.env.VOICE_APP_URL || 'http://host.docker.internal:3000').replace(/\/$/, '');
   const res = await fetch(base + '/api/callback-watch', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ entity, values: werte, attribute: opts.attribut, message: ansage.join(' '),
-      to: CLAUDE_PHONE_CALLER, device: '703', hours: opts.stunden })
+      to, device: '703', hours: opts.stunden })
   });
   const j = await res.json().catch(() => ({}));
   if (!res.ok || !j.success) fail('Rückruf nicht angelegt: ' + (j.error || res.status));
   console.log(`Rückruf angelegt (${j.id}): ${entity}${opts.attribut ? '.' + opts.attribut : ''} → ${werte}, ` +
-    `Anruf an ${CLAUDE_PHONE_CALLER}, gültig bis ${j.expires}`);
+    `Anruf an ${to}, gültig bis ${j.expires}`);
 }
 
 async function main() {

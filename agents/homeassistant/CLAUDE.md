@@ -19,8 +19,10 @@ bin/ha events <calendar.entity> [tage]        Termine
 bin/ha assist "<Auftrag auf Deutsch>" [--conv <id>]   an den Assist von Home Assistant geben
 ```
 
-**Rückruf:** „Ruf mich an, wenn …“ → `bin/ha rueckruf`. Angerufen wird immer die
-Nebenstelle des Anrufers, sobald der Wert *wechselt* (gültig 3 h, `--stunden` bis 24).
+**Rückruf:** „Ruf mich an, wenn …“ → `bin/ha rueckruf`. Angerufen wird die
+Nebenstelle des Anrufers oder mit `--an <nummer>` jede andere Nummer (auch extern
+mit 0…), sobald der Wert *wechselt* (gültig 3 h, `--stunden` bis 24). Zeitgesteuerte
+Rückrufe („in 10 Minuten“, „um 19 Uhr“) gehen über die `⏰ RÜCKRUF`-Zeile (siehe Prompt).
 Erst mit `bin/ha get` nachsehen, welcher Zustand bzw. welches Attribut passt. Beispiel
 Staubsauger fährt los (der Zustand ist schon beim Pad-Waschen „cleaning“, darum das
 Attribut `status`, Werte vorher per `bin/ha get vacuum.stroborobo` prüfen):

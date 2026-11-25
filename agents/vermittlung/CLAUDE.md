@@ -76,6 +76,13 @@ antworte in dieser Reihenfolge (kurz):
 Die Ziffern kann der Anrufer während des Gesprächs auch einfach auf dem
 Telefon drücken – die Anlage verbindet dann sofort.
 
+## Rückruf
+
+Will jemand zurückgerufen werden oder soll jemand anderes angerufen werden
+(„ruf mich in 10 Minuten an“, „ruf Lars um 19 Uhr an und sag …“), leg einen
+Rückruf mit der `⏰ RÜCKRUF`-Zeile an (Format steht im Prompt unter `[RÜCKRUF]`).
+Personen über ihre 2x-Nummer anrufen lassen.
+
 ## Durchstellen
 
 Zum Durchstellen schreibst du zusätzlich zur VOICE_RESPONSE eine Zeile:

@@ -35,6 +35,41 @@ const THINKING_PHRASES = [
 
 const TRANSFER_NOTIFY_MS = 8000;
 
+// Every agent may schedule callbacks: one line per callback in its answer.
+const CALLBACK_RE = /⏰\s*RÜCKRUF:\s*(\{[^\n]*\})/g;
+const CALLBACK_HINT = '[RÜCKRUF] Du kannst Rückrufe anlegen – an den Anrufer oder an jede andere Nummer ' +
+  '(Nebenstelle, Wählnummer oder extern mit 0…/+49…). Dafür zusätzlich zur VOICE_RESPONSE je Rückruf eine Zeile: ' +
+  '⏰ RÜCKRUF: {"an":"<nummer, leer = Anrufer>","in_minuten":10,"ansage":"<was beim Anruf gesagt wird>"} ' +
+  '– statt in_minuten auch "um":"19:30" (deutsche Zeit) oder "wenn":{"entity":"vacuum.stroborobo",' +
+  '"werte":"cleaning","attribut":"status"} (ruft an, sobald Home Assistant in den Wert wechselt). ' +
+  'Sag dem Anrufer kurz, wann wer angerufen wird.';
+
+/**
+ * Create the callbacks an agent asked for (⏰ RÜCKRUF lines).
+ * @returns {{ok: number, failed: string[]}}
+ */
+function scheduleCallbacks(response, { callerId, device } = {}) {
+  const callbackWatch = require('./callback-watch');
+  const result = { ok: 0, failed: [] };
+  for (const m of String(response || '').matchAll(CALLBACK_RE)) {
+    try {
+      const j = JSON.parse(m[1]);
+      const wenn = j.wenn || {};
+      const w = callbackWatch.add({
+        to: j.an || callerId, message: j.ansage, device: device,
+        minutes: j.in_minuten, at: j.um,
+        entity: wenn.entity, values: wenn.werte, attribute: wenn.attribut, hours: wenn.stunden
+      });
+      log('CALLBACK scheduled ' + w.id + ' for ' + w.to);
+      result.ok++;
+    } catch (err) {
+      log('CALLBACK rejected (' + err.message + '): ' + m[1]);
+      result.failed.push(err.message);
+    }
+  }
+  return result;
+}
+
 /**
  * Wait for the final status of a REFER (NOTIFY with message/sipfrag).
  * Resolves {code, reason}; dialog ending counts as success (PBX took the
@@ -323,11 +358,13 @@ class CallSession {
       if (this.handedOff) break;
 
       const extra = extraPrompt ? await extraPrompt(transcript) : '';
-      const prompt = extra ? [devicePrompt || '', extra].join('\n') : devicePrompt;
+      const prompt = [devicePrompt || '', extra, CALLBACK_HINT].filter(Boolean).join('\n');
       const response = await this.askClaude(apiUrl, transcript, { devicePrompt: prompt, timeout, thinkingPhrases });
       if (!this.active || this.handedOff) break;
 
       await this.say(extractVoiceLine(response));
+      const cb = scheduleCallbacks(response, { callerId: this.callerId, device: this.device && this.device.extension });
+      if (cb.failed.length) await this.say('Den Rückruf konnte ich leider nicht anlegen.');
       if (onResponse && (await onResponse(response)) === 'stop') return;
     }
 
@@ -384,4 +421,4 @@ class CallSession {
   }
 }
 
-module.exports = { CallSession, waitForReferOutcome, extractVoiceLine, isGoodbye, parseYesNo, sleep };
+module.exports = { CallSession, waitForReferOutcome, scheduleCallbacks, CALLBACK_HINT, extractVoiceLine, isGoodbye, parseYesNo, sleep };
