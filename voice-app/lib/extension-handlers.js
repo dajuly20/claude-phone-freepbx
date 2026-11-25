@@ -112,31 +112,44 @@ async function handlePlaceholder(call, device) {
   await call.say(device.message || device.name + ' ist noch nicht eingerichtet.');
 }
 
-/**
- * "Zuletzt gewählt: …" – the caller's last targets, topped up with own
- * agents and people from the PBX book so there is always something to say.
- */
-function recentTargetsText(callerId, pbx, devices, selfExtension) {
-  const names = {};
-  for (const d of Object.values(devices || {})) names[String(d.extension)] = d.name;
-  if (pbx) for (const z of pbx.ziele) names[z.nummer] = z.name; // PBX names win
-  const fillers = Object.values(devices || {}).filter(d => d.type !== 'placeholder')
-    .map(d => String(d.extension))
-    .concat(pbx ? pbx.ziele.filter(z => z.art === 'person').map(z => z.nummer) : [])
-    .filter(n => n !== String(selfExtension));
-  const list = recentTargets.recent(callerId, 5, fillers)
-    .filter(n => n !== String(selfExtension) && names[n]);
-  if (!list.length) return '';
-  return 'Zuletzt gewählt: ' + list.map(n => names[n]).join(', ') + '.';
+// Main menu of the PBX ("1"): keys pressed during the operator call are put
+// straight through. Override per extension in extensions.yml: dtmf_map, keywords,
+// menu_text, thinking_phrases.
+const OPERATOR_DTMF_MAP = { 1: '1', 2: '20', 3: '30', 5: '50', 6: '60', 7: '7', 9: '9' };
+const OPERATOR_MENU_TEXT = 'Oder wähle aus dem Hauptmenü: Personen die 2, St. Georgen die 3, ' +
+  'Durchsage die 5, Mailbox die 6, Home Assistant die 7, Konferenzraum die 9.';
+
+// Said on its own (filler words aside) → straight through, no Claude round
+const OPERATOR_KEYWORDS = {
+  'hauptmenü': '1', 'hauptmenue': '1', 'haupt menü': '1', 'menü': '1',
+  'personen': '20', 'wg': '20',
+  'st georgen': '30', 'sankt georgen': '30', 'georgen': '30',
+  'durchsage': '50', 'durchsagen': '50',
+  'mailbox': '60', 'mailboxen': '60', 'anrufbeantworter': '60',
+  'home assistant': '7', 'homeassistant': '7', 'home assistent': '7', 'smart home': '7',
+  'konferenz': '9', 'konferenzraum': '9', 'telefonkonferenz': '9'
+};
+const KEYWORD_FILLERS = new Set(('bitte ins in zum zur die das den der dem mit mich mir verbinde verbinden ' +
+  'ich will möchte möchten würde gerne gern zu auf an ja hallo dann also mal einfach').split(' '));
+
+/** Keyword target for an utterance that consists only of a menu keyword, else null */
+function matchKeyword(transcript, keywords) {
+  const words = String(transcript).toLowerCase().replace(/st\./g, 'st').replace(/[^a-zäöüß0-9 ]+/g, ' ')
+    .split(/\s+/).filter(w => w && !KEYWORD_FILLERS.has(w));
+  const key = words.join(' ');
+  return key && Object.prototype.hasOwnProperty.call(keywords, key) ? String(keywords[key]) : null;
 }
 
-// Main menu of the PBX ("1"): keys pressed during the operator call are put
-// straight through. Override per extension with dtmf_map / menu_text in extensions.yml.
-const OPERATOR_DTMF_MAP = { 1: '1', 2: '20', 3: '30', 5: '50', 6: '60', 7: '7', 9: '9' };
-const OPERATOR_MENU_TEXT = 'Hauptmenü: Personen die 2, St. Georgen die 3, Durchsage die 5, ' +
-  'Mailbox die 6, Home Assistant die 7, Konferenzraum die 9 – oder sag mir einfach, ' +
-  'wen du sprechen möchtest.';
-const HAUPTMENUE_RE = /^\W*(?:(?:ins|zum|das|ich will ins|bitte)\s+)*haupt\s*men[üu]e?\W*(?:bitte)?\W*$/i;
+/** What the operator says when the caller is silent after the greeting */
+function operatorSilenceText(caller, menuText) {
+  return ['Willst du jemanden aus der WG direkt erreichen? Dann sag einfach den Namen.',
+    caller.owner ? 'Ansonsten kann ich für dich auch nach Kontakten aus deinem Adressbuch suchen.' : '',
+    menuText || OPERATOR_MENU_TEXT].filter(Boolean).join(' ');
+}
+
+// Switchboard-style filler while Claude thinks (the generic list is too playful here)
+const OPERATOR_THINKING = ['Einen Moment bitte.', 'Ich schaue nach.', 'Einen Augenblick.',
+  'Moment, ich suche die Verbindung.'];
 
 /** type: operator – Claude decides whom to connect, we REFER */
 async function handleOperator(call, device, ctx) {
@@ -189,17 +202,18 @@ async function handleOperator(call, device, ctx) {
     devicePrompt: devicePrompt,
     timeout: device.timeout || 30,
     firstSilenceMs: device.silence_hint_ms === undefined ? OPERATOR_SILENCE_MS : device.silence_hint_ms,
+    thinkingPhrases: device.thinking_phrases || OPERATOR_THINKING,
     onFirstSilence: async function() {
-      const recent = recentTargetsText(call.callerId, pbx, ctx.deviceRegistry.getAll(), device.extension);
-      const text = [recent, device.menu_text || OPERATOR_MENU_TEXT].filter(Boolean).join(' ');
+      const text = operatorSilenceText(caller, device.menu_text);
       log('OPERATOR silent caller – ' + text);
       await call.say(text);
     },
     extraPrompt: caller.owner ? addressBookPrompt : null,
     beforeAsk: async function(transcript) {
-      if (!HAUPTMENUE_RE.test(transcript)) return 'continue';
-      await call.say('Ich verbinde mit dem Hauptmenü.');
-      return (await transferTo('1', 'gesagt: ' + transcript, false)) ? 'stop' : 'continue';
+      const target = matchKeyword(transcript, device.keywords || OPERATOR_KEYWORDS);
+      if (!target) return 'continue';
+      await call.say('Ich verbinde.');
+      return (await transferTo(target, 'Stichwort: ' + transcript, false)) ? 'stop' : 'continue';
     },
     onResponse: async function(response) {
       const match = response.match(TRANSFER_RE);
@@ -309,4 +323,5 @@ async function runExtension(call, device, ctx) {
   await handler(call, device, ctx);
 }
 
-module.exports = { runExtension, TRANSFER_RE, identifyCaller, addressBookPrompt, operatorGreeting };
+module.exports = { runExtension, TRANSFER_RE, identifyCaller, addressBookPrompt, operatorGreeting,
+  matchKeyword, operatorSilenceText, OPERATOR_KEYWORDS };

@@ -37,8 +37,9 @@ function log(msg) {
   console.log('[' + new Date().toISOString() + '] ' + msg);
 }
 
-function getRandomThinkingPhrase() {
-  return THINKING_PHRASES[Math.floor(Math.random() * THINKING_PHRASES.length)];
+function getRandomThinkingPhrase(phrases) {
+  const list = phrases && phrases.length ? phrases : THINKING_PHRASES;
+  return list[Math.floor(Math.random() * list.length)];
 }
 
 function isGoodbye(transcript) {
@@ -222,7 +223,7 @@ class CallSession {
   }
 
   /** Ask a claude-api-server, with thinking phrase + hold music */
-  async askClaude(apiUrl, transcript, { devicePrompt, timeout } = {}) {
+  async askClaude(apiUrl, transcript, { devicePrompt, timeout, thinkingPhrases } = {}) {
     this.usedApis.add(apiUrl);
 
     // THINKING FEEDBACK
@@ -230,7 +231,7 @@ class CallSession {
     // clip (10+ seconds) for short filler phrases. Waiting for the full
     // clip in that case would leave the caller in dead air, so we give up
     // waiting after 3s and move on (the clip keeps playing in the background).
-    const thinkingUrl = await this.options.ttsService.generateSpeech(getRandomThinkingPhrase(), this.voiceId);
+    const thinkingUrl = await this.options.ttsService.generateSpeech(getRandomThinkingPhrase(thinkingPhrases), this.voiceId);
     if (this.active) {
       await Promise.race([this.play(thinkingUrl), sleep(3000)]);
     }
@@ -258,7 +259,7 @@ class CallSession {
    * @param {Function} [opts.extraPrompt] - (transcript) => text appended to devicePrompt for this turn
    */
   async converse(apiUrl, { greeting, devicePrompt, timeout, maxTurns = 20, onResponse,
-    firstSilenceMs = 0, onFirstSilence, beforeAsk, extraPrompt } = {}) {
+    firstSilenceMs = 0, onFirstSilence, beforeAsk, extraPrompt, thinkingPhrases } = {}) {
     if (greeting) await this.say(greeting);
 
     let turn = 0;
@@ -290,7 +291,7 @@ class CallSession {
 
       const extra = extraPrompt ? await extraPrompt(transcript) : '';
       const prompt = extra ? [devicePrompt || '', extra].join('\n') : devicePrompt;
-      const response = await this.askClaude(apiUrl, transcript, { devicePrompt: prompt, timeout });
+      const response = await this.askClaude(apiUrl, transcript, { devicePrompt: prompt, timeout, thinkingPhrases });
       if (!this.active || this.handedOff) break;
 
       await this.say(extractVoiceLine(response));

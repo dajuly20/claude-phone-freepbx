@@ -97,3 +97,21 @@ test('operator greeting: name, else extension digit by digit, else plain', () =>
   assert.match(operatorGreeting({ name: '', extension: '402' }), /Nebenstelle 4 0 2 an\./);
   assert.strictEqual(operatorGreeting({ name: '' }), 'Vermittlung, guten Tag. Mit wem darf ich dich verbinden?');
 });
+
+test('operator keywords: only a bare keyword goes straight through', () => {
+  const { matchKeyword, OPERATOR_KEYWORDS: K } = require('../lib/extension-handlers');
+  assert.strictEqual(matchKeyword('Hauptmenü bitte.', K), '1');
+  assert.strictEqual(matchKeyword('Verbinde mich mit Home Assistant.', K), '7');
+  assert.strictEqual(matchKeyword('Ich möchte zur Durchsage', K), '50');
+  assert.strictEqual(matchKeyword('St. Georgen', K), '30');
+  assert.strictEqual(matchKeyword('Konferenzraum!', K), '9');
+  assert.strictEqual(matchKeyword('Durchsage ins Wohnzimmer', K), null);
+  assert.strictEqual(matchKeyword('Was gibt es im Hauptmenü?', K), null);
+  assert.strictEqual(matchKeyword('Julian', K), null);
+});
+
+test('operator silence text: address book only for the owner', () => {
+  const { operatorSilenceText } = require('../lib/extension-handlers');
+  assert.match(operatorSilenceText({ owner: true }), /WG direkt.*Adressbuch.*Hauptmenü: Personen die 2/);
+  assert.doesNotMatch(operatorSilenceText({ owner: false }), /Adressbuch/);
+});
