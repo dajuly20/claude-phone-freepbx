@@ -5,7 +5,7 @@
 
 const axios = require('axios');
 const hostControl = require('./host-control');
-const extensionConfig = require('./extension-config');
+const pbxDirectory = require('./pbx-directory');
 const { parseYesNo, sleep } = require('./call-session');
 
 const TRANSFER_RE = /🔀\s*TRANSFER:\s*\*?\*?\s*([0-9*#+]+)/i;
@@ -63,8 +63,9 @@ async function handlePlaceholder(call, device) {
 async function handleOperator(call, device, ctx) {
   if (!(await agentReady(call, device))) return;
 
-  const directory = extensionConfig.buildDirectoryText(
-    ctx.deviceRegistry.getAll(), ctx.deviceRegistry.getDirectory(), device.extension);
+  const pbx = await pbxDirectory.fetchDirectory();
+  const directory = pbxDirectory.buildText(
+    pbx, ctx.deviceRegistry.getAll(), ctx.deviceRegistry.getDirectory(), device.extension);
 
   const devicePrompt = [
     device.prompt || '',
