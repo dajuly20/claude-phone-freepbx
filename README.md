@@ -155,7 +155,10 @@ Neue Nebenstellen legt der Skill an:
 ~/.claude/skills/freepbx-extension/freepbx-ext.sh --jump julian@docker.mrz.ip 902 'Proxmox'
 ```
 
-### 2. Claude-Token erzeugen (Laptop)
+### 2. Claude-Zugang: Token (Abo) oder API-Key
+
+Eins von beiden reicht. **API-Key** von https://console.anthropic.com → *API Keys*, in die `.env` als `ANTHROPIC_API_KEY=` (kostet pro Nutzung, mit Haiku nur Cent-Beträge pro Anruf). Oder **Token** übers Abo:
+
 
 Den Token brauchen die Agent-Container (999, später 901). Er läuft über dein Claude-Abo.
 

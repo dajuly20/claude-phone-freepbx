@@ -133,7 +133,8 @@ services:
       dockerfile: claude-agent/Dockerfile
     restart: unless-stopped
     environment:
-      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN}
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}   # Abo  (claude setup-token)
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}               # oder API-Key (console.anthropic.com)
       CLAUDE_MODEL: claude-haiku-5-5     # schnell genug fürs Durchstellen
     volumes:
       - ./agents/vermittlung:/agent:ro
@@ -144,7 +145,8 @@ services:
   #   build: { context: ., dockerfile: claude-agent/Dockerfile }
   #   restart: unless-stopped
   #   environment:
-  #     CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN}
+  #     CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
+  #     ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
   #     CLAUDE_MODEL: claude-sonnet-5-5
   #   volumes:
   #     - ./agents/netzwerk:/agent
