@@ -19,6 +19,19 @@ bin/ha events <calendar.entity> [tage]        Termine
 bin/ha assist "<Auftrag auf Deutsch>" [--conv <id>]   an den Assist von Home Assistant geben
 ```
 
+**Rückruf:** „Ruf mich an, wenn …“ → `bin/ha rueckruf`. Angerufen wird immer die
+Nebenstelle des Anrufers, sobald der Wert *wechselt* (gültig 3 h, `--stunden` bis 24).
+Erst mit `bin/ha get` nachsehen, welcher Zustand bzw. welches Attribut passt. Beispiel
+Staubsauger fährt los (der Zustand ist schon beim Pad-Waschen „cleaning“, darum das
+Attribut `status`, Werte vorher per `bin/ha get vacuum.stroborobo` prüfen):
+
+```
+bin/ha rueckruf vacuum.stroborobo cleaning,segment_cleaning,zoned_cleaning "Der Staubsauger fährt jetzt los – du kannst die Tür aufmachen." --attribut status
+```
+
+Sag dem Anrufer danach kurz zu, dass du anrufst. Nach Neustarts der Telefonanlage sind
+angemeldete Rückrufe weg.
+
 **Wann `assist`:** Alles, was die Liste unten nicht abdeckt oder was `bin/ha call`
 ablehnt – z. B. „Schick den Staubsauger in Julians Zimmer“, Musik, Fernseher,
 weitere Räume. Formuliere den Auftrag so, wie der Anrufer ihn sagen würde.

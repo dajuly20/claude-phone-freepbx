@@ -216,6 +216,10 @@ function initializeServers() {
   });
 
   httpServer.app.use("/api", queryRouter);
+
+  // ========== CALLBACK WATCH ("ruf mich an, wenn …") ==========
+  httpServer.app.use("/api", require("./lib/callback-watch").router);
+  console.log("[" + new Date().toISOString() + "] CALLBACK WATCH enabled (/api/callback-watch)");
   console.log("[" + new Date().toISOString() + "] QUERY API enabled (/api/query, /api/devices)");
 
   // Finalize HTTP server

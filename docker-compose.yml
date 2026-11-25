@@ -187,6 +187,10 @@ services:
       # bin/ha assist: derselbe Gesprächs-Agent wie Julians Home Assistant Voice
       # (gleiche freigegebene Entitäten = gleiche Rechte)
       HA_ASSIST_AGENT: ${HA_ASSIST_AGENT:-conversation.claude_conversation}
+      # bin/ha rueckruf → Voice-App (Host-Netz) /api/callback-watch
+      VOICE_APP_URL: http://host.docker.internal:3000
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./agents/homeassistant:/agent:ro
     ports:

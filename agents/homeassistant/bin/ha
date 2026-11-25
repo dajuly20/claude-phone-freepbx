@@ -17,6 +17,9 @@
  *   ha call <domain.service> <entity_id> [field=value ...] [--confirmed]
  *   ha items <todo.entity>                   items of a to-do list
  *   ha events <calendar.entity> [days]       upcoming calendar events
+ *   ha rueckruf <entity> <wert[,wert]> "<Ansage>" [--attribut <name>] [--stunden <h>]
+ *                                            call the caller back as soon as the entity
+ *                                            (or attribute) changes into one of the values
  *   ha assist "<Auftrag>" [--conv <id>]      hand the request to Home Assistant's
  *                                            Assist agent – same exposed entities and
  *                                            rights as Julian's Home Assistant Voice
@@ -214,6 +217,34 @@ async function cmdAssist(args) {
   if (res.conversation_id) console.log('conv: ' + res.conversation_id);
 }
 
+/**
+ * Ask the voice-app to call the current caller back when an entity changes
+ * into one of the given values. Only ever calls the caller's own extension.
+ */
+async function cmdRueckruf(perm, args) {
+  const opts = { attribut: '', stunden: 3 };
+  const pos = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--attribut') opts.attribut = args[++i];
+    else if (args[i] === '--stunden') opts.stunden = Number(args[++i]);
+    else pos.push(args[i]);
+  }
+  const [entity, werte, ...ansage] = pos;
+  if (!entity || !werte || !ansage.length) fail('ha rueckruf <entity> <wert[,wert]> "<Ansage>" [--attribut <name>] [--stunden <h>]');
+  if (!canRead(perm, entity)) fail(`${entity} darf nicht gelesen werden`);
+  if (!CLAUDE_PHONE_CALLER || !/^\+?[0-9]{2,20}$/.test(CLAUDE_PHONE_CALLER)) fail('Nummer des Anrufers unbekannt – kein Rückruf möglich');
+  const base = (process.env.VOICE_APP_URL || 'http://host.docker.internal:3000').replace(/\/$/, '');
+  const res = await fetch(base + '/api/callback-watch', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ entity, values: werte, attribute: opts.attribut, message: ansage.join(' '),
+      to: CLAUDE_PHONE_CALLER, device: '703', hours: opts.stunden })
+  });
+  const j = await res.json().catch(() => ({}));
+  if (!res.ok || !j.success) fail('Rückruf nicht angelegt: ' + (j.error || res.status));
+  console.log(`Rückruf angelegt (${j.id}): ${entity}${opts.attribut ? '.' + opts.attribut : ''} → ${werte}, ` +
+    `Anruf an ${CLAUDE_PHONE_CALLER}, gültig bis ${j.expires}`);
+}
+
 async function main() {
   const [cmd, ...args] = process.argv.slice(2);
   const perm = loadPermissions();
@@ -224,8 +255,9 @@ async function main() {
     case 'items': return cmdItems(perm, args[0]);
     case 'events': return cmdEvents(perm, args[0], args[1]);
     case 'assist': return cmdAssist(args);
+    case 'rueckruf': return cmdRueckruf(perm, args);
     default:
-      console.log(fs.readFileSync(__filename, 'utf8').split('\n').slice(13, 23).map((l) => l.replace(/^ \* ?/, '')).join('\n'));
+      console.log(fs.readFileSync(__filename, 'utf8').split('\n').slice(13, 26).map((l) => l.replace(/^ \* ?/, '')).join('\n'));
   }
 }
 
