@@ -98,6 +98,17 @@ services:
     image: drachtio/drachtio-freeswitch-mrf:latest
     restart: unless-stopped
     network_mode: host
+    # SIP/RTP fest an EXTERNAL_IP binden. Sonst nimmt FreeSWITCH die IP der
+    # ersten Default-Route – bei mehreren Netzwerkkarten oft die falsche,
+    # dann "Connection refused" auf :5080 und Anrufe enden mit 503.
+    entrypoint:
+      - /bin/bash
+      - -c
+      - >-
+        sed -i -E 's#name="(sip|rtp)-ip" value="[^"]*"#name="\1-ip" value="${EXTERNAL_IP}"#'
+        /usr/local/freeswitch/conf/sip_profiles/mrf.xml
+        && exec /entrypoint.sh "$$@"
+      - --
     command: >
       freeswitch
       --sip-port 5080
