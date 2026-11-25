@@ -58,7 +58,9 @@ function identifyCaller(callerId) {
       line: '[ANRUFER] Julian (über seine Rufnummer ' + id + ' erkannt).' };
   }
   if (!id) return { owner: false, name: '', line: '[ANRUFER] unbekannt (Rufnummer unterdrückt).' };
-  if (!contacts.isExternal(id)) return { owner: false, name: '', line: '[ANRUFER] Nebenstelle ' + id };
+  if (!contacts.isExternal(id)) {
+    return { owner: false, name: '', extension: id, line: '[ANRUFER] Nebenstelle ' + id };
+  }
 
   const c = contacts.lookupNumber(id);
   if (!c) return { owner: false, name: '', line: '[ANRUFER] von außen, Nummer ' + id + ' (nicht im Adressbuch).' };
@@ -79,6 +81,19 @@ function addressBookPrompt(transcript) {
   log('CONTACTS ' + hits.length + ' match(es) for owner: ' + hits.map(c => c.name).join(', '));
   return ['[ADRESSBUCH – nur für Julian, Treffer zu seiner letzten Aussage]']
     .concat(hits.map(contacts.describe), ['[END ADRESSBUCH]']).join('\n');
+}
+
+/**
+ * Operator greeting: by name if we know the caller, otherwise name the
+ * extension so the caller hears where the call comes from ("4 0 1", digit by digit).
+ */
+function operatorGreeting(caller) {
+  if (caller.name) return 'Vermittlung, guten Tag ' + caller.name + '. Mit wem darf ich dich verbinden?';
+  if (caller.extension) {
+    return 'Vermittlung, guten Tag. Du rufst von Nebenstelle ' + caller.extension.split('').join(' ') +
+      ' an. Mit wem darf ich dich verbinden?';
+  }
+  return 'Vermittlung, guten Tag. Mit wem darf ich dich verbinden?';
 }
 
 /** type: claude – plain conversation with one agent */
@@ -170,8 +185,7 @@ async function handleOperator(call, device, ctx) {
   });
 
   await call.converse(device.agent, {
-    greeting: device.greeting ||
-      'Vermittlung, guten Tag' + (caller.name ? ' ' + caller.name : '') + '. Mit wem darf ich dich verbinden?',
+    greeting: device.greeting || operatorGreeting(caller),
     devicePrompt: devicePrompt,
     timeout: device.timeout || 30,
     firstSilenceMs: device.silence_hint_ms === undefined ? OPERATOR_SILENCE_MS : device.silence_hint_ms,
@@ -295,4 +309,4 @@ async function runExtension(call, device, ctx) {
   await handler(call, device, ctx);
 }
 
-module.exports = { runExtension, TRANSFER_RE, identifyCaller, addressBookPrompt };
+module.exports = { runExtension, TRANSFER_RE, identifyCaller, addressBookPrompt, operatorGreeting };

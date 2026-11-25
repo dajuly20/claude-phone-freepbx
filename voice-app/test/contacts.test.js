@@ -90,3 +90,10 @@ test('missing file: identification just off, no crash', () => {
   assert.strictEqual(contacts.lookupNumber('01701234567'), null);
   assert.deepStrictEqual(contacts.search('Max'), []);
 });
+
+test('operator greeting: name, else extension digit by digit, else plain', () => {
+  const { operatorGreeting } = require('../lib/extension-handlers');
+  assert.match(operatorGreeting({ name: 'Julian' }), /guten Tag Julian\./);
+  assert.match(operatorGreeting({ name: '', extension: '402' }), /Nebenstelle 4 0 2 an\./);
+  assert.strictEqual(operatorGreeting({ name: '' }), 'Vermittlung, guten Tag. Mit wem darf ich dich verbinden?');
+});
