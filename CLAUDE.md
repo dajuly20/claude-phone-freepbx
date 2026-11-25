@@ -13,6 +13,9 @@ dieser Agent **claude-phone**. Vor Arbeit an der Telefonie:
    `shared-wg-telefonie:`. Keine Geheimnisse dort ablegen.
 „Schau in deinen Korb“ von Julian heißt genau das.
 
+**Arbeitsbranch:** `shared-wg-telefonie` (in diesem Repo; auch der Docker-Host 192.168.188.222 läuft darauf).
+Nicht direkt auf `main` committen – zurück nach `main` nur auf Julians Ansage.
+
 ## Project Overview
 
 Claude Phone gives your Claude Code installation a phone number through 3CX PBX integration:
