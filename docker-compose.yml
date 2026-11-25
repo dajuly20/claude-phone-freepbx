@@ -184,6 +184,9 @@ services:
       CLAUDE_SKIP_PERMISSIONS: "false"
       HA_URL: ${HA_URL:-http://ha.mrz.ip}
       HA_TOKEN: ${HA_TOKEN:-}
+      # bin/ha assist: derselbe Gesprächs-Agent wie Julians Home Assistant Voice
+      # (gleiche freigegebene Entitäten = gleiche Rechte)
+      HA_ASSIST_AGENT: ${HA_ASSIST_AGENT:-conversation.claude_conversation}
     volumes:
       - ./agents/homeassistant:/agent:ro
     ports:
