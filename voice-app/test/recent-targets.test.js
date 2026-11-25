@@ -43,3 +43,17 @@ test('waitForUtterance rejects with NO_SPEECH, speaking cancels it', async () =>
   const u = await p;
   assert.strictEqual(u.audio.length, 4);
 });
+
+test('adaptive VAD: steady line noise is not speech, louder voice is', () => {
+  const { AudioForkSession } = require('../lib/audio-fork');
+  const s = new AudioForkSession({ ws: { on() {} }, callUuid: 'v' });
+  s._pcmEndian = 'LE';
+  const chunk = (amp) => {
+    const b = Buffer.alloc(640);
+    for (let i = 0; i < 320; i++) b.writeInt16LE(Math.round(amp * Math.sin(i / 3) + (i % 7 - 3) * amp / 10), i * 2);
+    return b;
+  };
+  for (let i = 0; i < 100; i++) s._trackNoise(chunk(2800)); // RMS ~2000 like phone 502
+  assert.strictEqual(s._isSpeech(chunk(2800)), false);
+  assert.strictEqual(s._isSpeech(chunk(15000)), true);
+});

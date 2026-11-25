@@ -94,9 +94,11 @@ services:
     image: drachtio/drachtio-server:latest
     restart: unless-stopped
     network_mode: host
+    # transport=udp zuerst: FreePBX nimmt auf 5060 kein TCP an. Steht tcp vorn,
+    # schickt drachtio Requests im Dialog (REFER fürs Durchstellen) per TCP → abgelehnt.
     command: >
       drachtio
-      --contact "sip:*:${DRACHTIO_SIP_PORT:-5060};transport=tcp,udp"
+      --contact "sip:*:${DRACHTIO_SIP_PORT:-5060};transport=udp,tcp"
       --external-ip ${EXTERNAL_IP}
       --secret ${DRACHTIO_SECRET:-cymru}
       --port 9022

@@ -24,6 +24,11 @@ function pcmStats(buf, endian = 'LE') {
   return { sampleCount, rms, maxAbs, nearZeroRatio: nearZero / sampleCount };
 }
 
+// Adaptive VAD: noise floor = NOISE_PERCENTILE of the last NOISE_WINDOW chunks (20 ms each)
+const NOISE_WINDOW = 250;
+const NOISE_MIN_SAMPLES = 25;
+const NOISE_PERCENTILE = 0.15;
+
 class AudioForkSession extends EventEmitter {
   constructor({
     ws,
@@ -77,7 +82,35 @@ class AudioForkSession extends EventEmitter {
     const was = this.captureEnabled;
     this.captureEnabled = Boolean(enabled);
     console.log('[AUDIO-DEBUG] setCaptureEnabled: ' + was + ' -> ' + this.captureEnabled + ' for ' + this.callUuid);
-    if (!this.captureEnabled) this._resetUtterance();
+    // Fresh start either way: nothing captured before (beep, greeting echo)
+    // may leak into the next utterance
+    this._resetUtterance();
+  }
+
+  /**
+   * Track the line's noise floor (low percentile of the last ~5 s), so a
+   * noisy line (hum, speakerphone, ATA) is not taken for endless speech.
+   */
+  _trackNoise(buf) {
+    if (!this._pcmEndian) this._pcmEndian = this._detectEndian(buf);
+    const stats = pcmStats(buf, this._pcmEndian);
+    if (!this._noise) this._noise = { rms: [], max: [] };
+    this._noise.rms.push(stats.rms);
+    this._noise.max.push(stats.maxAbs);
+    if (this._noise.rms.length > NOISE_WINDOW) {
+      this._noise.rms.shift();
+      this._noise.max.shift();
+    }
+    return stats;
+  }
+
+  _noiseFloor() {
+    if (!this._noise || this._noise.rms.length < NOISE_MIN_SAMPLES) return { rms: 0, max: 0 };
+    const pct = (arr) => {
+      const sorted = arr.slice().sort((x, y) => x - y);
+      return sorted[Math.floor(sorted.length * NOISE_PERCENTILE)];
+    };
+    return { rms: pct(this._noise.rms), max: pct(this._noise.max) };
   }
 
   _chunkDurationMs(byteLen) {
@@ -174,12 +207,12 @@ class AudioForkSession extends EventEmitter {
     return result;
   }
 
-  _isSpeech(buf) {
-    if (!this._pcmEndian) this._pcmEndian = this._detectEndian(buf);
-    const stats = pcmStats(buf, this._pcmEndian);
+  _isSpeech(buf, stats) {
+    if (!stats) stats = this._trackNoise(buf);
 
-    const rmsThreshold = 650;
-    const maxThreshold = 2200;
+    const floor = this._noiseFloor();
+    const rmsThreshold = Math.max(650, floor.rms * 2.5);
+    const maxThreshold = Math.max(2200, floor.max * 2);
 
     const looksSilent = stats.nearZeroRatio > 0.94 && stats.rms < rmsThreshold;
     if (looksSilent) return false;
@@ -220,19 +253,21 @@ class AudioForkSession extends EventEmitter {
       this._lastLogTime = now;
     }
 
+    if (data.length < 2) return;
+    const chunkStats = this._trackNoise(data); // also while not capturing
+
     if (!this.captureEnabled) {
       return;
     }
 
-    if (data.length < 2) return;
-
-    const isSpeech = this._isSpeech(data);
+    const isSpeech = this._isSpeech(data, chunkStats);
     const chunkMs = this._chunkDurationMs(data.length);
 
     // Log speech detection periodically
     if (this._binaryCount % 50 === 1) {
       const stats = pcmStats(data, this._pcmEndian || 'LE');
-      console.log('[AUDIO-DEBUG] VAD: isSpeech=' + isSpeech + ', inSpeech=' + this._inSpeech + ', silenceMs=' + Math.round(this._silenceMs) + ', RMS=' + Math.round(stats.rms) + ', max=' + stats.maxAbs);
+      const floor = this._noiseFloor();
+      console.log('[AUDIO-DEBUG] VAD: isSpeech=' + isSpeech + ', inSpeech=' + this._inSpeech + ', silenceMs=' + Math.round(this._silenceMs) + ', RMS=' + Math.round(stats.rms) + ', max=' + stats.maxAbs + ', floorRMS=' + Math.round(floor.rms) + ', floorMax=' + floor.max);
     }
 
     if (!this._inSpeech) {
