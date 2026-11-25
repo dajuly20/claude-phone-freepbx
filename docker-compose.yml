@@ -140,6 +140,12 @@ services:
       - ./agents/vermittlung:/agent:ro
     ports:
       - "127.0.0.1:3401:3333"
+    healthcheck:                         # "unhealthy", wenn der Claude-Zugang nicht klappt
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3333/health"]
+      interval: 60s
+      timeout: 15s
+      start_period: 20s
+      retries: 2
 
   # agent-netzwerk:                      # für 802, später
   #   build: { context: ., dockerfile: claude-agent/Dockerfile }
@@ -152,6 +158,12 @@ services:
   #     - ./agents/netzwerk:/agent
   #   ports:
   #     - "127.0.0.1:3402:3333"
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3333/health"]
+  #     interval: 60s
+  #     timeout: 15s
+  #     start_period: 20s
+  #     retries: 2
 
 volumes:
   audio:

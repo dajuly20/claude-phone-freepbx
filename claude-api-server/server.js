@@ -119,6 +119,62 @@ console.log('[STARTUP] API keys loaded:', apiKeys.join(', '));
 // Session storage: callId -> claudeSessionId
 const sessions = new Map();
 
+/**
+ * Claude access check. Without working Anthropic access every call fails,
+ * so /health reports it (503) and the container turns "unhealthy".
+ *   ok          – subscription token / login present, or API key accepted
+ *   missing     – no API key, no token, no login
+ *   invalid     – API key rejected by Anthropic
+ *   unreachable – api.anthropic.com not reachable
+ */
+const AUTH_RECHECK_MS = 5 * 60 * 1000;
+const AUTH_ERROR_RE = /not logged in|\/login|invalid x-api-key|authentication_error|credit balance|oauth token/i;
+const auth = { state: 'unknown', detail: 'noch nicht geprüft', checkedAt: null };
+
+function setAuth(state, detail) {
+  if (auth.state !== state) {
+    const line = `[AUTH] Claude-Zugang: ${state} – ${detail}`;
+    if (state === 'ok') console.log(line); else console.error(line);
+  }
+  Object.assign(auth, { state, detail, checkedAt: new Date().toISOString() });
+}
+
+async function checkAuth() {
+  if (claudeEnv.CLAUDE_CODE_OAUTH_TOKEN) {
+    return setAuth('ok', 'Abo-Token gesetzt (CLAUDE_CODE_OAUTH_TOKEN)');
+  }
+  const apiKey = claudeEnv.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    if (fs.existsSync(path.join(claudeEnv.HOME, '.claude', '.credentials.json'))) {
+      return setAuth('ok', 'Claude-Login vorhanden (~/.claude)');
+    }
+    return setAuth('missing', 'weder ANTHROPIC_API_KEY noch CLAUDE_CODE_OAUTH_TOKEN noch Claude-Login');
+  }
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/models?limit=1', {
+      headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      signal: AbortSignal.timeout(8000)
+    });
+    if (res.ok) return setAuth('ok', 'API-Key gültig');
+    if (res.status === 401 || res.status === 403) {
+      return setAuth('invalid', `API-Key wird abgelehnt (HTTP ${res.status})`);
+    }
+    return setAuth('unreachable', `unerwartete Antwort von api.anthropic.com (HTTP ${res.status})`);
+  } catch (err) {
+    return setAuth('unreachable', `api.anthropic.com nicht erreichbar (${err.cause?.code || err.name})`);
+  }
+}
+
+/** Called after a failed CLI run: an auth error flips /health to 503 at once */
+function noteCliFailure(errorText) {
+  if (AUTH_ERROR_RE.test(errorText)) {
+    setAuth('invalid', 'Claude CLI meldet Anmeldefehler: ' + errorText.split('\n')[0].slice(0, 120));
+  }
+}
+
+checkAuth();
+setInterval(checkAuth, AUTH_RECHECK_MS).unref();
+
 // Model selection - Sonnet for balanced speed/quality
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-5';
 
@@ -313,7 +369,8 @@ app.post('/ask', async (req, res) => {
       console.error(`STDERR: ${stderr}`);
       console.error(`STDOUT: ${stdout.substring(0, 500)}`);
       const errorMsg = stderr || stdout || `Exit code ${code}`;
-      return res.json({ success: false, error: `Claude CLI failed: ${errorMsg}`, duration_ms });
+      noteCliFailure(errorMsg);
+      return res.json({ success: false, error: `Claude CLI failed: ${errorMsg}`, auth: auth.state, duration_ms });
     }
 
     const { response, sessionId } = parseClaudeStdout(stdout);
@@ -411,6 +468,7 @@ app.post('/ask-structured', async (req, res) => {
 
       if (code !== 0) {
         lastError = `Claude CLI failed: ${stderr}`;
+        noteCliFailure(String(stderr || stdout || ''));
         lastRaw = String(stdout || '').trim();
         return res.status(502).json({
           success: false,
@@ -501,10 +559,16 @@ app.post('/end-session', (req, res) => {
  * GET /health
  * Health check endpoint
  */
-app.get('/health', (req, res) => {
-  res.json({
-    status: 'ok',
+app.get('/health', async (req, res) => {
+  // Re-check right away if access is broken, so a fixed key is noticed quickly
+  if (auth.state !== 'ok') await checkAuth();
+  const ok = auth.state === 'ok';
+  res.status(ok ? 200 : 503).json({
+    status: ok ? 'ok' : 'error',
     service: 'claude-api-server',
+    claude_auth: auth.state,
+    detail: auth.detail,
+    model: CLAUDE_MODEL,
     timestamp: new Date().toISOString()
   });
 });

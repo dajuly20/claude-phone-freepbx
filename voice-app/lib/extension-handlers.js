@@ -3,6 +3,7 @@
  * One call flow per extension type (see extension-config.js).
  */
 
+const axios = require('axios');
 const hostControl = require('./host-control');
 const extensionConfig = require('./extension-config');
 const { parseYesNo, sleep } = require('./call-session');
@@ -15,8 +16,36 @@ function log(msg) {
   console.log('[' + new Date().toISOString() + '] ' + msg);
 }
 
+// What the caller hears when an agent's /health is not ok
+const AGENT_DOWN_TEXT = {
+  missing: 'ist gerade nicht verfügbar: Für Claude ist kein Zugang eingerichtet.',
+  invalid: 'ist gerade nicht verfügbar: Der Claude-Zugang wird abgelehnt. Bitte den API-Key prüfen.',
+  unreachable: 'ist gerade nicht verfügbar: Anthropic ist nicht erreichbar.',
+  down: 'ist gerade nicht verfügbar: Der Claude-Container antwortet nicht.'
+};
+
+/**
+ * Check an agent before greeting the caller, so a broken Claude access
+ * gives a clear announcement instead of silence or a generic error.
+ * @returns {Promise<boolean>} true if the agent is usable
+ */
+async function agentReady(call, device) {
+  let state;
+  try {
+    await axios.get(device.agent + '/health', { timeout: 10000 });
+    return true;
+  } catch (err) {
+    state = (err.response && err.response.data && err.response.data.claude_auth) || 'down';
+    log('AGENT ' + device.agent + ' not ready: ' + state +
+      (err.response && err.response.data ? ' – ' + err.response.data.detail : ' – ' + err.message));
+  }
+  await call.say(device.name + ' ' + (AGENT_DOWN_TEXT[state] || AGENT_DOWN_TEXT.down));
+  return false;
+}
+
 /** type: claude – plain conversation with one agent */
 async function handleClaude(call, device) {
+  if (!(await agentReady(call, device))) return;
   await call.converse(device.agent, {
     greeting: device.greeting || 'Hallo! Hier ist ' + device.name + '. Wie kann ich dir helfen?',
     devicePrompt: device.prompt,
@@ -31,6 +60,8 @@ async function handlePlaceholder(call, device) {
 
 /** type: operator – Claude decides whom to connect, we REFER */
 async function handleOperator(call, device, ctx) {
+  if (!(await agentReady(call, device))) return;
+
   const directory = extensionConfig.buildDirectoryText(
     ctx.deviceRegistry.getAll(), ctx.deviceRegistry.getDirectory(), device.extension);
 
