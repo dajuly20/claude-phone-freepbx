@@ -22,9 +22,9 @@ Unterschiede zum Original:
 
 | Nr. | Name | Typ | Was passiert |
 |-----|------|-----|--------------|
-| **800** | Vermittlung | `operator` | Claude (Haiku, Container `agent-vermittlung`) fragt, wohin der Anruf soll, und stellt durch |
-| **801** | Julians Rechner | `host` | Prüft den Laptop. Läuft er, landest du bei Claude Code auf dem Laptop. Ist er aus, bietet 801 Wake-on-LAN an |
-| **802** | Netzwerk-Agent | `placeholder` | Sagt im Moment nur „noch nicht eingerichtet“ |
+| **700** | Vermittlung | `operator` | Claude (Haiku, Container `agent-vermittlung`) fragt, wohin der Anruf soll, und stellt durch |
+| **701** | Julians Rechner | `host` | Prüft den Laptop. Läuft er, landest du bei Claude Code auf dem Laptop. Ist er aus, bietet 701 Wake-on-LAN an |
+| **702** | Netzwerk-Agent | `placeholder` | Sagt im Moment nur „noch nicht eingerichtet“ |
 
 ## Architektur
 
@@ -49,13 +49,13 @@ flowchart LR
     cloud["OpenAI Whisper (STT)<br/>ElevenLabs (TTS)"]
 
     phone <--> pbx
-    pbx <-- "SIP, registriert 800/801/802" --> drachtio
+    pbx <-- "SIP, registriert 700/701/702" --> drachtio
     pbx <-- RTP --> fs
     drachtio --- voice
     fs --- voice
-    voice -- "800" --> vermittlung
-    voice -. "802" .-> netzwerk
-    voice -- "801: health / WoL" --> api
+    voice -- "700" --> vermittlung
+    voice -. "702" .-> netzwerk
+    voice -- "701: health / WoL" --> api
     api --> cc
     voice <--> cloud
 ```
@@ -66,9 +66,9 @@ Was läuft wo:
 |------|-----------|---------------|
 | **docker.mrz.ip** | drachtio, FreeSWITCH, voice-app, agent-vermittlung | `docker compose up -d` in `~/docker/claude-phone-freepbx` |
 | **Laptop** | nur `claude-api-server` auf Port 3333 | `node claude-api-server/server.js` (siehe [Laptop vorbereiten](#6-laptop-vorbereiten-für-900)) |
-| **pbx.mrz.ip** | FreePBX, Nebenstellen 800/801/802 als PJSIP | Skill `freepbx-extension` |
+| **pbx.mrz.ip** | FreePBX, Nebenstellen 700/701/702 als PJSIP | Skill `freepbx-extension` |
 
-### Ablauf 800 – Vermittlung
+### Ablauf 700 – Vermittlung
 
 ```mermaid
 sequenceDiagram
@@ -76,21 +76,21 @@ sequenceDiagram
     participant V as voice-app
     participant C as agent-vermittlung
     participant P as FreePBX
-    A->>V: wählt 800
+    A->>V: wählt 700
     V->>A: „Vermittlung, wohin darf ich verbinden?“
     A->>V: „Zu meinem Rechner“
     V->>C: Text + Telefonbuch
-    C-->>V: „Ich verbinde zu Julians Rechner“ + 🔀 TRANSFER: 801
+    C-->>V: „Ich verbinde zu Julians Rechner“ + 🔀 TRANSFER: 701
     V->>A: Ansage
-    V->>P: SIP REFER → 801
-    P->>A: verbunden mit 801
+    V->>P: SIP REFER → 701
+    P->>A: verbunden mit 701
 ```
 
-### Ablauf 801 – Host prüfen und wecken
+### Ablauf 701 – Host prüfen und wecken
 
 ```mermaid
 flowchart TD
-    start([Anruf auf 801]) --> resolve["Alle addresses auflösen<br/>fritz.box-Name → Kabel- und WLAN-IP<br/>+ WireGuard 192.168.188.201"]
+    start([Anruf auf 701]) --> resolve["Alle addresses auflösen<br/>fritz.box-Name → Kabel- und WLAN-IP<br/>+ WireGuard 192.168.188.201"]
     resolve --> health{"GET :3333/health<br/>an irgendeiner IP?"}
     health -- ja --> talk["Gespräch mit Claude Code<br/>auf dem Laptop"]
     health -- nein --> probe{"TCP-Port 22<br/>erreichbar?"}
@@ -118,7 +118,7 @@ sequenceDiagram
     V->>J: Nachricht (TTS)
     opt mode = conversation
         J->>V: Rückfrage
-        V->>V: Claude des Geräts fragen (z.B. 801 → Laptop)
+        V->>V: Claude des Geräts fragen (z.B. 701 → Laptop)
         V->>J: Antwort
     end
 ```
@@ -126,7 +126,7 @@ sequenceDiagram
 ```bash
 curl -X POST http://192.168.188.222:3000/api/outbound-call \
   -H 'Content-Type: application/json' \
-  -d '{"to": "10", "device": "801", "message": "Backup ist fertig.", "mode": "announce"}'
+  -d '{"to": "10", "device": "701", "message": "Backup ist fertig.", "mode": "announce"}'
 ```
 
 ---
@@ -146,13 +146,13 @@ Verzeichnisse:
 
 ### 1. Nebenstellen in FreePBX ✅
 
-Erledigt: 800, 801 und 802 sind angelegt, ihre Secrets stehen in der `.env`.
+Erledigt: 700, 701 und 702 sind angelegt, ihre Secrets stehen in der `.env`.
 Neue Nebenstellen legt der Skill an:
 
 ```bash
-~/.claude/skills/freepbx-extension/freepbx-ext.sh 803 'Proxmox'
+~/.claude/skills/freepbx-extension/freepbx-ext.sh 703 'Proxmox'
 # PBX sperrt die eigene IP? Dann über den Docker-Host:
-~/.claude/skills/freepbx-extension/freepbx-ext.sh --jump julian@docker.mrz.ip 803 'Proxmox'
+~/.claude/skills/freepbx-extension/freepbx-ext.sh --jump julian@docker.mrz.ip 703 'Proxmox'
 ```
 
 ### 2. Claude-Zugang: Token (Abo) oder API-Key
@@ -160,7 +160,7 @@ Neue Nebenstellen legt der Skill an:
 Eins von beiden reicht. **API-Key** von https://console.anthropic.com → *API Keys*, in die `.env` als `ANTHROPIC_API_KEY=` (kostet pro Nutzung, mit Haiku nur Cent-Beträge pro Anruf). Oder **Token** übers Abo:
 
 
-Den Token brauchen die Agent-Container (800, später 802). Er läuft über dein Claude-Abo.
+Den Token brauchen die Agent-Container (700, später 702). Er läuft über dein Claude-Abo.
 
 ```bash
 claude setup-token
@@ -216,7 +216,7 @@ docker compose logs -f voice-app  # Strg+C beendet nur das Mitlesen
 ```
 
 Im Log der voice-app sollte bei jeder Nebenstelle eine erfolgreiche Registrierung stehen,
-`[REGISTRAR] SUCCESS - Registered as extension 800` (dasselbe für 801 und 802). In FreePBX unter *Reports → Asterisk Info → Peers*
+`[REGISTRAR] SUCCESS - Registered as extension 700` (dasselbe für 701 und 702). In FreePBX unter *Reports → Asterisk Info → Peers*
 oder auf der PBX mit `sudo asterisk -rx 'pjsip show contacts'` müssen die drei
 mit `192.168.188.222` auftauchen.
 
@@ -224,9 +224,9 @@ Testen:
 
 | Test | Erwartung |
 |------|-----------|
-| 802 anrufen | „Der Netzwerk-Agent ist noch nicht eingerichtet“ |
-| 800 anrufen, „verbinde mich mit 802“ | Ansage, danach landest du auf 802 |
-| 801 anrufen (Laptop-API aus) | „Soll ich ihn starten?“ |
+| 702 anrufen | „Der Netzwerk-Agent ist noch nicht eingerichtet“ |
+| 700 anrufen, „verbinde mich mit 702“ | Ansage, danach landest du auf 702 |
+| 701 anrufen (Laptop-API aus) | „Soll ich ihn starten?“ |
 | `curl http://192.168.188.222:3000/api/devices` | Liste der Nebenstellen |
 
 Agent einzeln prüfen:
@@ -236,7 +236,7 @@ curl -s http://127.0.0.1:3401/health
 docker compose logs agent-vermittlung
 ```
 
-### 6. Laptop vorbereiten (für 801)
+### 6. Laptop vorbereiten (für 701)
 
 Auf dem Laptop läuft nur der `claude-api-server`. Für einen ersten Test reicht:
 
@@ -251,7 +251,7 @@ Damit er dauerhaft läuft, eine systemd-User-Unit
 
 ```ini
 [Unit]
-Description=Claude API Server (Claude Phone, Nebenstelle 801)
+Description=Claude API Server (Claude Phone, Nebenstelle 701)
 After=network-online.target
 
 [Service]
@@ -307,10 +307,10 @@ Workflow: am Laptop ändern → `git push` → auf docker.mrz.ip `git pull && do
 ## Ideen für später
 
 **Agents und Nebenstellen**
-- **802 Netzwerk-Agent:** darf `nmap`, `ping`, `fping` und `scripts/network_audit.py`. Anfragen wie „Welche Geräte sind neu im Netz?“ oder „Ist der Proxmox erreichbar?“
-- **803 Proxmox:** VM-Status und Backups abfragen, eine VM starten. Lesender API-Token, Schreibrechte nur für ausgewählte Befehle.
-- **804 Home Assistant:** „Mach das Licht im Büro aus“ oder „Wie warm ist es draußen?“ über die HA-REST-API (der Token ist schon für den Alexa-Sync da).
-- **805 TODO-Diktat:** Was du sagst, landet in `TODO.md` oder Todoist. Gegenstück zum Alexa-Sync.
+- **702 Netzwerk-Agent:** darf `nmap`, `ping`, `fping` und `scripts/network_audit.py`. Anfragen wie „Welche Geräte sind neu im Netz?“ oder „Ist der Proxmox erreichbar?“
+- **703 Proxmox:** VM-Status und Backups abfragen, eine VM starten. Lesender API-Token, Schreibrechte nur für ausgewählte Befehle.
+- **704 Home Assistant:** „Mach das Licht im Büro aus“ oder „Wie warm ist es draußen?“ über die HA-REST-API (der Token ist schon für den Alexa-Sync da).
+- **705 TODO-Diktat:** Was du sagst, landet in `TODO.md` oder Todoist. Gegenstück zum Alexa-Sync.
 - **Vermittlung mit Gedächtnis:** „wie letztes Mal“ verbindet mit der zuletzt gewählten Nebenstelle. Dazu Anrufer-Erkennung über die Caller-ID.
 
 **Rückrufe und Alarme**
@@ -320,11 +320,11 @@ Workflow: am Laptop ändern → `git push` → auf docker.mrz.ip `git pull && do
 
 **Telefonbuch und Telefone**
 - **Google-Kontakte → SNOM:** ein kleiner Dienst (People API oder CardDAV), der ein Snom-XML-Telefonbuch bereitstellt oder den FreePBX Contact Manager befüllt. Dieselben Kontakte kennt dann auch die Vermittlung („verbinde mich mit Mama“).
-- **Externe Ziele für 800:** Handynummern unter `directory:` eintragen und über den Trunk vermitteln.
+- **Externe Ziele für 700:** Handynummern unter `directory:` eintragen und über den Trunk vermitteln.
 
 **Sicherheit und Betrieb**
 - **API-Schlüssel für Port 3000:** Im Moment kann jeder im LAN Anrufe auslösen.
-- **PIN für 801:** vor dem Zugriff auf Claude Code mit vollen Rechten eine Ziffernfolge abfragen (DTMF).
+- **PIN für 701:** vor dem Zugriff auf Claude Code mit vollen Rechten eine Ziffernfolge abfragen (DTMF).
 - **Laptop-API nur für docker.mrz.ip:** Firewall-Regel auf dem Laptop, die Port 3333 nur für 192.168.188.222 freigibt.
 - **Healthcheck und Restart:** `healthcheck:` für voice-app und Agents in der Compose-Datei, Status in Uptime Kuma.
 - **Kosten im Blick:** Whisper- und ElevenLabs-Minuten pro Anruf loggen.
