@@ -2,6 +2,17 @@
 
 Voice interface for Claude Code via SIP/3CX. Call your AI, and your AI can call you.
 
+## Gemeinsame Wissensbasis Telefonie (zuerst lesen)
+
+In der Mappe `~/BashScripts/claudeProjects/shared-wg-telefonie/` (Repo `dajuly20/BashScripts`) heißt
+dieser Agent **claude-phone**. Vor Arbeit an der Telefonie:
+1. `git -C ~/BashScripts pull`, dann `README.md` und `schnittstellen.md` der Mappe lesen.
+2. **Zuerst den eigenen Korb `aufgaben/claude-phone.md` abarbeiten**; Erledigtes abhaken (`[x]`, Datum).
+3. Wünsche/Rückmeldungen an andere in deren Korb (`aufgaben/freepbx.md`, `aufgaben/homeassistant.md`);
+   Schnittstellen-Änderungen in `schnittstellen.md` + Zeile in `protokoll.md`; committen/pushen mit Präfix
+   `shared-wg-telefonie:`. Keine Geheimnisse dort ablegen.
+„Schau in deinen Korb“ von Julian heißt genau das.
+
 ## Project Overview
 
 Claude Phone gives your Claude Code installation a phone number through 3CX PBX integration:
