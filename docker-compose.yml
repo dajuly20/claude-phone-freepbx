@@ -144,6 +144,7 @@ services:
     volumes:
       - audio:/app/audio
       - data:/app/data          # zuletzt gewählte Ziele der Vermittlung
+      - ./private:/app/private:ro  # Julians Adressbuch (contacts.vcf, NICHT im Git)
     depends_on: [drachtio, freeswitch]
 
   # ── Claude-Instanzen ────────────────────────────────────────────────────

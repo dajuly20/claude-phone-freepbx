@@ -58,3 +58,7 @@ __pycache__/
 
 # Demo/scratch files created during voice calls
 claude-api-server/example.md
+
+# Private address book (vCard) – never commit
+/private/
+*.vcf

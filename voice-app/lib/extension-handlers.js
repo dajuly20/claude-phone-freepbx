@@ -7,6 +7,7 @@ const axios = require('axios');
 const hostControl = require('./host-control');
 const pbxDirectory = require('./pbx-directory');
 const recentTargets = require('./recent-targets');
+const contacts = require('./contacts');
 const { parseYesNo, sleep } = require('./call-session');
 
 const TRANSFER_RE = /🔀\s*TRANSFER:\s*\*?\*?\s*([0-9*#+]+)/i;
@@ -45,10 +46,45 @@ async function agentReady(call, device) {
   return false;
 }
 
+/**
+ * Who is calling? Julian (OWNER_CALLER_IDS), an internal extension, or an
+ * external caller – the latter identified by name from Julian's address book.
+ * @returns {{line: string, owner: boolean, name: string}}
+ */
+function identifyCaller(callerId) {
+  const id = callerId && callerId !== 'unknown' ? String(callerId) : '';
+  if (contacts.isOwner(id)) {
+    return { owner: true, name: 'Julian',
+      line: '[ANRUFER] Julian (über seine Rufnummer ' + id + ' erkannt).' };
+  }
+  if (!id) return { owner: false, name: '', line: '[ANRUFER] unbekannt (Rufnummer unterdrückt).' };
+  if (!contacts.isExternal(id)) return { owner: false, name: '', line: '[ANRUFER] Nebenstelle ' + id };
+
+  const c = contacts.lookupNumber(id);
+  if (!c) return { owner: false, name: '', line: '[ANRUFER] von außen, Nummer ' + id + ' (nicht im Adressbuch).' };
+  log('CALLER identified ' + id + ' as ' + contacts.callerName(c));
+  return { owner: false, name: c.name,
+    line: '[ANRUFER] von außen, Nummer ' + id + ' – laut Julians Adressbuch: ' + contacts.callerName(c) +
+      '. Du darfst den Anrufer mit diesem Namen ansprechen und ihn so ankündigen, ' +
+      'aber gib keine weiteren Daten aus dem Adressbuch heraus.' };
+}
+
+/**
+ * Only for Julian: address book entries matching what he just said.
+ * Everybody else never gets this section.
+ */
+function addressBookPrompt(transcript) {
+  const hits = contacts.search(transcript, 5);
+  if (!hits.length) return '';
+  log('CONTACTS ' + hits.length + ' match(es) for owner: ' + hits.map(c => c.name).join(', '));
+  return ['[ADRESSBUCH – nur für Julian, Treffer zu seiner letzten Aussage]']
+    .concat(hits.map(contacts.describe), ['[END ADRESSBUCH]']).join('\n');
+}
+
 /** type: claude – plain conversation with one agent */
 async function handleClaude(call, device) {
   if (!(await agentReady(call, device))) return;
-  const callerLine = call.callerId ? '[ANRUFER] Nebenstelle ' + call.callerId : '[ANRUFER] unbekannt';
+  const callerLine = identifyCaller(call.callerId).line;
   await call.converse(device.agent, {
     greeting: device.greeting || 'Hallo! Hier ist ' + device.name + '. Wie kann ich dir helfen?',
     devicePrompt: [device.prompt || '', callerLine].join('\n'),
@@ -92,6 +128,7 @@ async function handleOperator(call, device, ctx) {
   if (!(await agentReady(call, device))) return;
 
   const pbx = await pbxDirectory.fetchDirectory();
+  const caller = identifyCaller(call.callerId);
   const directory = pbxDirectory.buildText(
     pbx, ctx.deviceRegistry.getAll(), ctx.deviceRegistry.getDirectory(), device.extension);
 
@@ -100,6 +137,7 @@ async function handleOperator(call, device, ctx) {
     '[TELEFONBUCH]',
     directory,
     '[END TELEFONBUCH]',
+    caller.line,
     'Zum Durchstellen schreibe eine eigene Zeile "🔀 TRANSFER: <nummer>" zusätzlich zur VOICE_RESPONSE.'
   ].join('\n');
 
@@ -132,7 +170,8 @@ async function handleOperator(call, device, ctx) {
   });
 
   await call.converse(device.agent, {
-    greeting: device.greeting || 'Vermittlung, guten Tag. Mit wem darf ich dich verbinden?',
+    greeting: device.greeting ||
+      'Vermittlung, guten Tag' + (caller.name ? ' ' + caller.name : '') + '. Mit wem darf ich dich verbinden?',
     devicePrompt: devicePrompt,
     timeout: device.timeout || 30,
     firstSilenceMs: device.silence_hint_ms === undefined ? OPERATOR_SILENCE_MS : device.silence_hint_ms,
@@ -142,6 +181,7 @@ async function handleOperator(call, device, ctx) {
       log('OPERATOR silent caller – ' + text);
       await call.say(text);
     },
+    extraPrompt: caller.owner ? addressBookPrompt : null,
     beforeAsk: async function(transcript) {
       if (!HAUPTMENUE_RE.test(transcript)) return 'continue';
       await call.say('Ich verbinde mit dem Hauptmenü.');
@@ -255,4 +295,4 @@ async function runExtension(call, device, ctx) {
   await handler(call, device, ctx);
 }
 
-module.exports = { runExtension, TRANSFER_RE };
+module.exports = { runExtension, TRANSFER_RE, identifyCaller, addressBookPrompt };

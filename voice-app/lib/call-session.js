@@ -255,9 +255,10 @@ class CallSession {
    *   nothing (or nothing understandable) within this time, call opts.onFirstSilence()
    *   (once) and keep listening
    * @param {Function} [opts.beforeAsk] - (transcript) => 'stop' to handle it without Claude
+   * @param {Function} [opts.extraPrompt] - (transcript) => text appended to devicePrompt for this turn
    */
   async converse(apiUrl, { greeting, devicePrompt, timeout, maxTurns = 20, onResponse,
-    firstSilenceMs = 0, onFirstSilence, beforeAsk } = {}) {
+    firstSilenceMs = 0, onFirstSilence, beforeAsk, extraPrompt } = {}) {
     if (greeting) await this.say(greeting);
 
     let turn = 0;
@@ -287,7 +288,9 @@ class CallSession {
       if (beforeAsk && (await beforeAsk(transcript)) === 'stop') return;
       if (this.handedOff) break;
 
-      const response = await this.askClaude(apiUrl, transcript, { devicePrompt, timeout });
+      const extra = extraPrompt ? await extraPrompt(transcript) : '';
+      const prompt = extra ? [devicePrompt || '', extra].join('\n') : devicePrompt;
+      const response = await this.askClaude(apiUrl, transcript, { devicePrompt: prompt, timeout });
       if (!this.active || this.handedOff) break;
 
       await this.say(extractVoiceLine(response));
