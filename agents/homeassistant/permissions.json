@@ -45,7 +45,8 @@
     "media_player.sony_wohnzimmer",
     "vacuum.stroborobo",
     "light.romy_*",
-    "light.lars_*"
+    "light.lars_*",
+    "scene.julian_*"
   ],
   "write": {
     "light.allgemeinbereich": {},
@@ -218,6 +219,11 @@
       "brightness_pct": [
         1,
         100
+      ]
+    },
+    "scene.julian_*": {
+      "_services": [
+        "turn_on"
       ]
     }
   },
