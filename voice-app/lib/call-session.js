@@ -112,6 +112,7 @@ class CallSession {
     this.audio = null;
     this.forkRunning = false;
     this.usedApis = new Set();
+    this.handedOff = false; // set while/after a transfer: stop talking, end the loop
 
     dialog.on('destroy', () => { this.active = false; });
   }
@@ -129,8 +130,25 @@ class CallSession {
     log('AUDIO Fork connected');
   }
 
+  /**
+   * DTMF from the caller (RFC 2833 / SIP INFO via FreeSWITCH).
+   * @param {Function} handler - (digit) => void
+   */
+  enableDtmf(handler) {
+    this.endpoint.on('dtmf', (evt) => {
+      const digit = evt && (evt.dtmf || evt.digit);
+      log('DTMF ' + this.callUuid + ': ' + digit);
+      if (digit) handler(String(digit));
+    });
+  }
+
+  /** Stop whatever is being played right now */
+  async breakPlayback() {
+    try { await this.endpoint.api('uuid_break', this.endpoint.uuid + ' all'); } catch (e) {}
+  }
+
   async play(url) {
-    if (!this.active) return;
+    if (!this.active || this.handedOff) return;
     try {
       await this.endpoint.play(url);
     } catch (e) {
@@ -234,21 +252,23 @@ class CallSession {
    * Multi-turn conversation with a claude-api-server.
    * @param {Function} [opts.onResponse] - (response) => 'continue' | 'stop'
    * @param {number} [opts.firstSilenceMs] - after the greeting: if the caller says
-   *   nothing within this time, call opts.onFirstSilence() (once) and keep listening
+   *   nothing (or nothing understandable) within this time, call opts.onFirstSilence()
+   *   (once) and keep listening
+   * @param {Function} [opts.beforeAsk] - (transcript) => 'stop' to handle it without Claude
    */
   async converse(apiUrl, { greeting, devicePrompt, timeout, maxTurns = 20, onResponse,
-    firstSilenceMs = 0, onFirstSilence } = {}) {
+    firstSilenceMs = 0, onFirstSilence, beforeAsk } = {}) {
     if (greeting) await this.say(greeting);
 
     let turn = 0;
-    while (turn < maxTurns && this.active) {
+    while (turn < maxTurns && this.active && !this.handedOff) {
       turn++;
       log('CONVERSATION Turn ' + turn + '/' + maxTurns + ' (' + apiUrl + ')');
 
       const firstTry = turn === 1 && firstSilenceMs > 0 && onFirstSilence;
       const transcript = await this.listen(firstTry ? { noSpeechMs: firstSilenceMs } : {});
-      if (!this.active) break;
-      if (!transcript && firstTry && this.lastListenSilent) {
+      if (!this.active || this.handedOff) break;
+      if (!transcript && firstTry) {
         await onFirstSilence();
         turn--; // the hint does not count as a turn
         firstSilenceMs = 0;
@@ -264,14 +284,17 @@ class CallSession {
         return;
       }
 
+      if (beforeAsk && (await beforeAsk(transcript)) === 'stop') return;
+      if (this.handedOff) break;
+
       const response = await this.askClaude(apiUrl, transcript, { devicePrompt, timeout });
-      if (!this.active) break;
+      if (!this.active || this.handedOff) break;
 
       await this.say(extractVoiceLine(response));
       if (onResponse && (await onResponse(response)) === 'stop') return;
     }
 
-    if (turn >= maxTurns && this.active) {
+    if (turn >= maxTurns && this.active && !this.handedOff) {
       await this.say("Wir haben jetzt schon eine Weile gesprochen. Auf Wiederhören!");
     }
   }

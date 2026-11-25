@@ -57,3 +57,26 @@ test('adaptive VAD: steady line noise is not speech, louder voice is', () => {
   assert.strictEqual(s._isSpeech(chunk(2800)), false);
   assert.strictEqual(s._isSpeech(chunk(15000)), true);
 });
+
+test('converse: beforeAsk stops, first silence/unclear plays hint once, handedOff ends loop', async () => {
+  const { CallSession } = require('../lib/call-session');
+  const said = [];
+  const dialog = { on() {} };
+  const call = new CallSession({ endpoint: { on() {} }, dialog, callUuid: 'c', options: {}, device: {} });
+  call.say = async (t) => { said.push(t); };
+  const answers = [null, 'Hauptmenü'];
+  call.listen = async () => { call.lastListenSilent = true; return answers.shift(); };
+  call.askClaude = async () => { throw new Error('should not ask Claude'); };
+  let hints = 0;
+  await call.converse('x', {
+    firstSilenceMs: 5000,
+    onFirstSilence: async () => { hints++; },
+    beforeAsk: async (t) => (t === 'Hauptmenü' ? 'stop' : 'continue')
+  });
+  assert.strictEqual(hints, 1);
+  assert.deepStrictEqual(said, []);
+
+  call.handedOff = true;
+  call.listen = async () => { throw new Error('loop should not run'); };
+  await call.converse('x', {});
+});

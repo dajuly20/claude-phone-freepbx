@@ -75,10 +75,17 @@ function recentTargetsText(callerId, pbx, devices, selfExtension) {
     .filter(n => n !== String(selfExtension));
   const list = recentTargets.recent(callerId, 5, fillers)
     .filter(n => n !== String(selfExtension) && names[n]);
-  if (!list.length) return 'Sag mir einfach, mit wem ich dich verbinden soll.';
-  return 'Zuletzt gewählt: ' + list.map(n => names[n]).join(', ') +
-    '. Sag einfach einen Namen.';
+  if (!list.length) return '';
+  return 'Zuletzt gewählt: ' + list.map(n => names[n]).join(', ') + '.';
 }
+
+// Main menu of the PBX ("1"): keys pressed during the operator call are put
+// straight through. Override per extension with dtmf_map / menu_text in extensions.yml.
+const OPERATOR_DTMF_MAP = { 1: '1', 2: '20', 3: '30', 5: '50', 6: '60', 7: '7', 9: '9' };
+const OPERATOR_MENU_TEXT = 'Hauptmenü: Personen die 2, St. Georgen die 3, Durchsage die 5, ' +
+  'Mailbox die 6, Home Assistant die 7, Konferenzraum die 9 – oder sag mir einfach, ' +
+  'wen du sprechen möchtest.';
+const HAUPTMENUE_RE = /^\W*(?:(?:ins|zum|das|ich will ins|bitte)\s+)*haupt\s*men[üu]e?\W*(?:bitte)?\W*$/i;
 
 /** type: operator – Claude decides whom to connect, we REFER */
 async function handleOperator(call, device, ctx) {
@@ -96,28 +103,54 @@ async function handleOperator(call, device, ctx) {
     'Zum Durchstellen schreibe eine eigene Zeile "🔀 TRANSFER: <nummer>" zusätzlich zur VOICE_RESPONSE.'
   ].join('\n');
 
+  let transferring = false;
+  async function transferTo(target, why, remember) {
+    if (transferring) return false;
+    transferring = true;
+    call.handedOff = true; // the conversation loop stops talking from here on
+    log('OPERATOR transfer -> ' + target + ' (' + why + ')');
+    try {
+      await call.transfer(target);
+      if (remember) recentTargets.record(call.callerId, target);
+      return true;
+    } catch (err) {
+      log('TRANSFER failed: ' + err.message);
+      transferring = false;
+      call.handedOff = false;
+      await call.say('Das Durchstellen hat leider nicht geklappt.');
+      return false;
+    }
+  }
+
+  // Keys of the main menu work at any time during the call
+  const dtmfMap = device.dtmf_map || OPERATOR_DTMF_MAP;
+  call.enableDtmf(async function(digit) {
+    const target = dtmfMap[digit];
+    if (!target || transferring) return;
+    await call.breakPlayback();
+    await transferTo(String(target), 'Taste ' + digit, false);
+  });
+
   await call.converse(device.agent, {
     greeting: device.greeting || 'Vermittlung, guten Tag. Mit wem darf ich dich verbinden?',
     devicePrompt: devicePrompt,
     timeout: device.timeout || 30,
     firstSilenceMs: device.silence_hint_ms === undefined ? OPERATOR_SILENCE_MS : device.silence_hint_ms,
     onFirstSilence: async function() {
-      const text = recentTargetsText(call.callerId, pbx, ctx.deviceRegistry.getAll(), device.extension);
+      const recent = recentTargetsText(call.callerId, pbx, ctx.deviceRegistry.getAll(), device.extension);
+      const text = [recent, device.menu_text || OPERATOR_MENU_TEXT].filter(Boolean).join(' ');
       log('OPERATOR silent caller – ' + text);
       await call.say(text);
+    },
+    beforeAsk: async function(transcript) {
+      if (!HAUPTMENUE_RE.test(transcript)) return 'continue';
+      await call.say('Ich verbinde mit dem Hauptmenü.');
+      return (await transferTo('1', 'gesagt: ' + transcript, false)) ? 'stop' : 'continue';
     },
     onResponse: async function(response) {
       const match = response.match(TRANSFER_RE);
       if (!match) return 'continue';
-      try {
-        await call.transfer(match[1]);
-        recentTargets.record(call.callerId, match[1]);
-      } catch (err) {
-        log('TRANSFER failed: ' + err.message);
-        await call.say('Das Durchstellen hat leider nicht geklappt.');
-        return 'continue';
-      }
-      return 'stop';
+      return (await transferTo(match[1], 'Claude', true)) ? 'stop' : 'continue';
     }
   });
 }
