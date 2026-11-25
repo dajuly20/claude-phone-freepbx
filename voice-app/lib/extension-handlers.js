@@ -69,7 +69,8 @@ function recentTargetsText(callerId, pbx, devices, selfExtension) {
   const names = {};
   for (const d of Object.values(devices || {})) names[String(d.extension)] = d.name;
   if (pbx) for (const z of pbx.ziele) names[z.nummer] = z.name; // PBX names win
-  const fillers = Object.values(devices || {}).map(d => String(d.extension))
+  const fillers = Object.values(devices || {}).filter(d => d.type !== 'placeholder')
+    .map(d => String(d.extension))
     .concat(pbx ? pbx.ziele.filter(z => z.art === 'person').map(z => z.nummer) : [])
     .filter(n => n !== String(selfExtension));
   const list = recentTargets.recent(callerId, 5, fillers)
