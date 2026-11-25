@@ -65,7 +65,7 @@ Was läuft wo:
 | Host | Was läuft | Wie gestartet |
 |------|-----------|---------------|
 | **docker.mrz.ip** | drachtio, FreeSWITCH, voice-app, agent-vermittlung | `docker compose up -d` in `~/docker/claude-phone-freepbx` |
-| **Laptop** | nur `claude-api-server` auf Port 3333 | `node claude-api-server/server.js` (siehe [Laptop vorbereiten](#5-laptop-vorbereiten-für-900)) |
+| **Laptop** | nur `claude-api-server` auf Port 3333 | `node claude-api-server/server.js` (siehe [Laptop vorbereiten](#6-laptop-vorbereiten-für-900)) |
 | **pbx.mrz.ip** | FreePBX, Nebenstellen 999/900/901 als PJSIP | Skill `freepbx-extension` |
 
 ### Ablauf 999 – Vermittlung
@@ -184,7 +184,28 @@ grep -c '^CLAUDE_CODE_OAUTH_TOKEN=sk-ant-' .env     # muss 1 ausgeben
 docker compose config -q && echo "Compose ok"
 ```
 
-### 4. Stack starten (docker.mrz.ip)
+### 4. Konfiguration prüfen (docker.mrz.ip)
+
+```bash
+cd ~/docker/claude-phone-freepbx
+./check-config.sh
+```
+
+Das Skript prüft die `.env` (Pflichtwerte, Rechte), testet die API-Keys von Anthropic, OpenAI
+und ElevenLabs online, prüft, ob das Claude-Modell verfügbar ist, ob `EXTERNAL_IP` zum Host
+gehört, ob die FreePBX antwortet und ob die Ports frei sind. Secrets gibt es nie aus.
+
+Bei Fehlern bietet es einen Dialog an (whiptail, klappt auch per SSH), in dem du die fehlenden
+Werte einträgst. Weitere Modi:
+
+| Aufruf | Was passiert |
+|--------|--------------|
+| `./check-config.sh --menu` | alle Einstellungen im Menü ansehen und bearbeiten |
+| `./check-config.sh --fix` | Fehler ohne Rückfrage direkt im Dialog beheben |
+| `./check-config.sh --quiet` | nur prüfen, nie fragen (Exit-Code 1 bei Fehlern) |
+| `./check-config.sh --no-online` | API-Keys nicht online testen |
+
+### 5. Stack starten (docker.mrz.ip)
 
 ```bash
 cd ~/docker/claude-phone-freepbx
@@ -215,7 +236,7 @@ curl -s http://127.0.0.1:3401/health
 docker compose logs agent-vermittlung
 ```
 
-### 5. Laptop vorbereiten (für 900)
+### 6. Laptop vorbereiten (für 900)
 
 Auf dem Laptop läuft nur der `claude-api-server`. Für einen ersten Test reicht:
 
@@ -259,7 +280,7 @@ und WoL im BIOS aktiviert ist. Unter Linux zusätzlich:
 sudo ethtool -s <interface> wol g
 ```
 
-### 6. Rückruf-Skill (Laptop)
+### 7. Rückruf-Skill (Laptop)
 
 `~/.claude/skills/call/lib/api.py` zeigt schon auf `http://192.168.188.222:3000`.
 Was noch fehlt: deine eigene Nummer als Kontakt „me“, damit „ruf mich an“ funktioniert.
