@@ -17,6 +17,9 @@
  *   ha call <domain.service> <entity_id> [field=value ...] [--confirmed]
  *   ha items <todo.entity>                   items of a to-do list
  *   ha events <calendar.entity> [days]       upcoming calendar events
+ *   ha assist "<Auftrag>" [--conv <id>]      hand the request to Home Assistant's
+ *                                            Assist agent – same exposed entities and
+ *                                            rights as Julian's Home Assistant Voice
  *
  * Needs HA_URL and HA_TOKEN in the environment.
  */
@@ -183,6 +186,34 @@ async function cmdEvents(perm, entity, days) {
     : '(keine Termine)');
 }
 
+/**
+ * Home Assistant Assist (POST /api/conversation/process): Assist only touches
+ * entities exposed to voice assistants in HA, so this has exactly the rights
+ * of Home Assistant Voice. Optional HA_ASSIST_AGENT = conversation agent id.
+ */
+async function cmdAssist(args) {
+  let conv = null;
+  const words = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--conv') conv = args[++i];
+    else words.push(args[i]);
+  }
+  const text = words.join(' ').trim();
+  if (!text) fail('ha assist "<Auftrag>" [--conv <id>]');
+  const body = { text, language: 'de' };
+  if (process.env.HA_ASSIST_AGENT) body.agent_id = process.env.HA_ASSIST_AGENT;
+  if (conv) body.conversation_id = conv;
+  const res = await api('POST', '/api/conversation/process', body);
+  const r = res.response || {};
+  const speech = ((r.speech || {}).plain || {}).speech || '';
+  const data = r.data || {};
+  const names = (list) => (list || []).map((t) => t.name || t.id).join(', ');
+  console.log('Assist (' + (r.response_type || '?') + '): ' + (speech || '(keine Antwort)'));
+  if (data.success && data.success.length) console.log('geschaltet: ' + names(data.success));
+  if (data.failed && data.failed.length) console.log('fehlgeschlagen: ' + names(data.failed));
+  if (res.conversation_id) console.log('conv: ' + res.conversation_id);
+}
+
 async function main() {
   const [cmd, ...args] = process.argv.slice(2);
   const perm = loadPermissions();
@@ -192,8 +223,9 @@ async function main() {
     case 'call': return cmdCall(perm, args[0], args[1], args.slice(2));
     case 'items': return cmdItems(perm, args[0]);
     case 'events': return cmdEvents(perm, args[0], args[1]);
+    case 'assist': return cmdAssist(args);
     default:
-      console.log(fs.readFileSync(__filename, 'utf8').split('\n').slice(13, 20).map((l) => l.replace(/^ \* ?/, '')).join('\n'));
+      console.log(fs.readFileSync(__filename, 'utf8').split('\n').slice(13, 23).map((l) => l.replace(/^ \* ?/, '')).join('\n'));
   }
 }
 
