@@ -35,14 +35,14 @@ function quotaError() {
 
 test('ElevenLabs used while it works', async () => {
   log.length = 0; elevenFails = null; tts._resetPause();
-  await tts.generateSpeech('Hallo');
+  await tts.generateSpeech('Test eins');
   assert.deepStrictEqual(log, ['eleven']);
 });
 
 test('quota exceeded → Home Assistant, then ElevenLabs paused', async () => {
   log.length = 0; elevenFails = quotaError(); tts._resetPause();
-  const url = await tts.generateSpeech('Hallo');
-  assert.match(url, /audio-files\/tts-/);
+  const url = await tts.generateSpeech('Test zwei');
+  assert.match(url, /audio-files\/cache-ha-/);
   assert.deepStrictEqual(log, ['eleven', 'ha-post http://ha.test/api/tts_get_url', 'ha-get http://ha.test/api/tts_proxy/a.mp3']);
   log.length = 0;
   await tts.generateSpeech('Nochmal');
@@ -51,8 +51,35 @@ test('quota exceeded → Home Assistant, then ElevenLabs paused', async () => {
 
 test('other ElevenLabs error → Home Assistant this time, no pause', async () => {
   log.length = 0; elevenFails = new Error('timeout'); tts._resetPause();
-  await tts.generateSpeech('Hallo');
+  await tts.generateSpeech('Test drei');
   elevenFails = null; log.length = 0;
-  await tts.generateSpeech('Hallo');
+  await tts.generateSpeech('Test vier');
   assert.deepStrictEqual(log, ['eleven']);
+});
+
+test('same text twice → second time from cache, no credits', async () => {
+  log.length = 0; elevenFails = null; tts._resetPause();
+  const a = await tts.generateSpeech('Hallo Julian, du rufst vom Snom an.');
+  const b = await tts.generateSpeech('Hallo Julian, du rufst vom Snom an.');
+  assert.strictEqual(a, b);
+  assert.match(a, /cache-el-/);
+  assert.deepStrictEqual(log, ['eleven']);
+});
+
+test('HA cache is separate: after recharge ElevenLabs voice comes back', async () => {
+  log.length = 0; elevenFails = quotaError(); tts._resetPause();
+  const ha = await tts.generateSpeech('Einen Moment bitte.');
+  assert.match(ha, /cache-ha-/);
+  elevenFails = null; tts._resetPause(); log.length = 0;
+  const el = await tts.generateSpeech('Einen Moment bitte.');
+  assert.match(el, /cache-el-/);
+  assert.deepStrictEqual(log, ['eleven']);
+});
+
+test('long texts are not cached', async () => {
+  log.length = 0; elevenFails = null; tts._resetPause();
+  const long = 'x'.repeat(500);
+  await tts.generateSpeech(long);
+  await tts.generateSpeech(long);
+  assert.deepStrictEqual(log, ['eleven', 'eleven']);
 });

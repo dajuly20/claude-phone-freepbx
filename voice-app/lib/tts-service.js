@@ -7,6 +7,11 @@
  * After a quota/auth error ElevenLabs is skipped for TTS_ELEVENLABS_PAUSE_MIN
  * minutes (default 30) so calls don't wait for a request that will fail.
  *   TTS_FALLBACK=homeassistant|none   HA_TTS_ENGINE, HA_TTS_LANGUAGE, HA_TTS_VOICE
+ *
+ * Cache: every text up to TTS_CACHE_MAX_CHARS (default 400) is stored once per
+ * provider+voice as cache-<provider>-<hash>.mp3 in the audio dir (a volume),
+ * so fixed phrases (greetings, menus, "Einen Moment") cost credits only once.
+ * Unused cache files go after TTS_CACHE_DAYS (default 30). TTS_CACHE=off.
  */
 
 const axios = require('axios');
@@ -60,14 +65,55 @@ function generateFilename(text) {
 const PAUSE_MS = (Number(process.env.TTS_ELEVENLABS_PAUSE_MIN) || 30) * 60000;
 let elevenLabsPausedUntil = 0;
 
-function saveAudio(text, data) {
-  const filename = generateFilename(text);
-  fs.writeFileSync(path.join(audioDir, filename), data);
+const CACHE_ON = process.env.TTS_CACHE !== 'off';
+const CACHE_MAX_CHARS = Number(process.env.TTS_CACHE_MAX_CHARS) || 400;
+const CACHE_DAYS = Number(process.env.TTS_CACHE_DAYS) || 30;
+
+function fileUrl(filename) {
   return `http://127.0.0.1:3000/audio-files/${filename}`;
 }
 
+/** Write audio (atomically, so playback never sees half a file) and return its URL */
+function saveAudio(text, data, filename) {
+  filename = filename || generateFilename(text);
+  const target = path.join(audioDir, filename);
+  const tmp = target + '.' + process.pid + '.tmp';
+  fs.writeFileSync(tmp, data);
+  fs.renameSync(tmp, target);
+  return fileUrl(filename);
+}
+
+/** Cache file name for this text with this provider/voice, or null if not cached */
+function cacheName(provider, voice, text) {
+  if (!CACHE_ON || !text || text.length > CACHE_MAX_CHARS) return null;
+  const hash = crypto.createHash('sha1').update([provider, voice, MODEL_ID, text.trim()].join('|'))
+    .digest('hex').substring(0, 20);
+  return `cache-${provider}-${hash}.mp3`;
+}
+
+/** URL of a cached file (and mark it as used), or null */
+function cacheGet(name) {
+  if (!name) return null;
+  const p = path.join(audioDir, name);
+  try {
+    const now = new Date();
+    fs.utimesSync(p, now, now);
+    logger.info('Speech from cache', { file: name });
+    return fileUrl(name);
+  } catch {
+    return null;
+  }
+}
+
+function haVoiceKey() {
+  return (process.env.HA_TTS_ENGINE || 'tts.home_assistant_cloud') + '/' +
+    (process.env.HA_TTS_LANGUAGE || 'de-DE') + '/' + (process.env.HA_TTS_VOICE || '');
+}
+
 /** Home Assistant TTS: POST /api/tts_get_url, then fetch the MP3 */
-async function generateSpeechHA(text) {
+async function generateSpeechHA(text, cacheFile = cacheName('ha', haVoiceKey(), text)) {
+  const cached = cacheGet(cacheFile);
+  if (cached) return cached;
   const { HA_URL, HA_TOKEN } = process.env;
   if (!HA_URL || !HA_TOKEN) throw new Error('HA_URL/HA_TOKEN not configured');
   const base = HA_URL.replace(/\/$/, '');
@@ -81,7 +127,7 @@ async function generateSpeechHA(text) {
   if (process.env.HA_TTS_VOICE) body.options = { voice: process.env.HA_TTS_VOICE };
   const res = await axios.post(base + '/api/tts_get_url', body, { headers, timeout: 15000 });
   const audio = await axios.get(base + res.data.path, { headers, timeout: 15000, responseType: 'arraybuffer' });
-  const url = saveAudio(text, audio.data);
+  const url = saveAudio(text, audio.data, cacheFile);
   logger.info('Speech generation successful (Home Assistant)', {
     engine: body.engine_id, latency: Date.now() - startTime, textLength: text.length
   });
@@ -94,9 +140,12 @@ async function generateSpeechHA(text) {
  */
 async function generateSpeech(text, voiceId = DEFAULT_VOICE_ID) {
   const fallback = (process.env.TTS_FALLBACK || 'homeassistant') !== 'none';
+  const elFile = cacheName('el', voiceId, text);
+  const cached = cacheGet(elFile);
+  if (cached) return cached;
   if (fallback && Date.now() < elevenLabsPausedUntil) return generateSpeechHA(text);
   try {
-    return await generateSpeechElevenLabs(text, voiceId);
+    return await generateSpeechElevenLabs(text, voiceId, elFile);
   } catch (err) {
     if (!fallback) throw err;
     if (err.pauseElevenLabs) {
@@ -112,7 +161,7 @@ async function generateSpeech(text, voiceId = DEFAULT_VOICE_ID) {
   }
 }
 
-async function generateSpeechElevenLabs(text, voiceId = DEFAULT_VOICE_ID) {
+async function generateSpeechElevenLabs(text, voiceId = DEFAULT_VOICE_ID, cacheFile = null) {
   const startTime = Date.now();
 
   try {
@@ -148,7 +197,7 @@ async function generateSpeechElevenLabs(text, voiceId = DEFAULT_VOICE_ID) {
       responseType: 'arraybuffer'
     });
 
-    const audioUrl = saveAudio(text, response.data);
+    const audioUrl = saveAudio(text, response.data, cacheFile);
 
     const latency = Date.now() - startTime;
     const fileSize = response.data.length;
@@ -202,15 +251,17 @@ function cleanupOldFiles(maxAgeMs = 60 * 60 * 1000) {
 
     let deletedCount = 0;
     files.forEach(file => {
-      if (!file.startsWith('tts-') || !file.endsWith('.mp3')) {
-        return;
-      }
+      let limit;
+      if (file.startsWith('tts-') && file.endsWith('.mp3')) limit = maxAgeMs;
+      else if (file.startsWith('cache-') && file.endsWith('.mp3')) limit = CACHE_DAYS * 86400000;
+      else if (file.endsWith('.tmp')) limit = maxAgeMs;
+      else return;
 
       const filepath = path.join(audioDir, file);
       const stats = fs.statSync(filepath);
       const age = now - stats.mtimeMs;
 
-      if (age > maxAgeMs) {
+      if (age > limit) {
         fs.unlinkSync(filepath);
         deletedCount++;
       }
