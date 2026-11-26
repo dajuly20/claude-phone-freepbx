@@ -98,7 +98,11 @@ function addressBookPrompt(transcript) {
  * Operator greeting: by name if we know the caller, otherwise name the
  * extension so the caller hears where the call comes from ("4 0 1", digit by digit).
  */
-const OPERATOR_QUESTION = 'Möchtest du mit einer bestimmten Person sprechen, oder etwas aus dem Hauptmenü – ' +
+// Persona: der Lord der Unterwelt, verdammt dazu, auf ewig das Fräulein vom Amt
+// der Deutschen Bundespost (1964) zu sein (Stimme in extensions.yml, Charakter
+// in agents/vermittlung/CLAUDE.md). Feste Sätze kurz halten – sie werden gecacht.
+const OPERATOR_INTRO = 'Fernamt, Vermittlung – seit 1964 und für alle Ewigkeit. ';
+const OPERATOR_QUESTION = 'Wen soll ich stöpseln? Eine bestimmte Person, oder etwas aus dem Hauptmenü – ' +
   'Personen, St. Georgen, Durchsage, Mailbox, Home Assistant oder Konferenzraum?';
 
 function operatorGreeting(caller) {
@@ -108,8 +112,8 @@ function operatorGreeting(caller) {
   else if (caller.ort) wo = 'du rufst vom ' + caller.ort + ' an.';
   else if (caller.geraet) wo = 'du rufst vom ' + caller.geraet + ' an.';
   else if (caller.extension) wo = 'du rufst von Nebenstelle ' + spokenDigits(caller.extension) + ' an.';
-  if (!wo) return (caller.name ? 'Hallo ' + caller.name + '. ' : 'Vermittlung, guten Tag. ') + OPERATOR_QUESTION;
-  return hallo + wo + ' ' + OPERATOR_QUESTION;
+  if (!wo) return OPERATOR_INTRO + (caller.name ? 'Hallo ' + caller.name + '. ' : '') + OPERATOR_QUESTION;
+  return OPERATOR_INTRO + hallo + wo + ' ' + OPERATOR_QUESTION;
 }
 
 /** "228" → "2 2 8", "*1" → "Stern 1" – numbers to dial, read digit by digit */
@@ -124,7 +128,8 @@ async function handleClaude(call, device) {
   await call.converse(device.agent, {
     greeting: device.greeting || 'Hallo! Hier ist ' + device.name + '. Wie kann ich dir helfen?',
     devicePrompt: [device.prompt || '', callerLine].join('\n'),
-    timeout: device.timeout || 60
+    timeout: device.timeout || 60,
+    thinkingPhrases: device.thinking_phrases
   });
 }
 
@@ -168,9 +173,9 @@ function operatorSilenceText(caller, menuText) {
     menuText || OPERATOR_MENU_TEXT].filter(Boolean).join(' ');
 }
 
-// Switchboard-style filler while Claude thinks (the generic list is too playful here)
-const OPERATOR_THINKING = ['Einen Moment bitte.', 'Ich schaue nach.', 'Einen Augenblick.',
-  'Moment, ich suche die Verbindung.'];
+// Switchboard-style filler while Claude thinks – im Ton des verdammten Fräuleins
+const OPERATOR_THINKING = ['Einen Moment, ich stöpsle.', 'Moment … der Klappenschrank klemmt mal wieder.',
+  'Einen Augenblick. Zeit habe ich ja – die ganze Ewigkeit.', 'Ich suche den richtigen Stecker.'];
 
 /** type: operator – Claude decides whom to connect, we REFER */
 async function handleOperator(call, device, ctx) {
@@ -205,7 +210,8 @@ async function handleOperator(call, device, ctx) {
       transferring = false;
       call.handedOff = false;
       // Never hang up on a failed transfer – tell the caller what to dial instead
-      await call.say('Durchstellen klappt gerade nicht – wähl bitte selbst die ' + spokenDigits(target) + '.');
+      await call.say('Die Leitung will nicht – nicht einmal hier unten. Wähl bitte selbst die ' +
+        spokenDigits(target) + '.');
       return false;
     }
   }
@@ -234,7 +240,7 @@ async function handleOperator(call, device, ctx) {
     beforeAsk: async function(transcript) {
       const target = matchKeyword(transcript, device.keywords || OPERATOR_KEYWORDS);
       if (!target) return 'continue';
-      await call.say('Ich verbinde.');
+      await call.say('Ich stöpsle durch.');
       return (await transferTo(target, 'Stichwort: ' + transcript, false)) ? 'stop' : 'continue';
     },
     onResponse: async function(response) {

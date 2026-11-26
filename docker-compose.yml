@@ -58,6 +58,7 @@ configs:
           agent: http://127.0.0.1:3401          # → Service agent-vermittlung
           password: ${EXT_700_PASSWORD}
           description: Vermittlung, verbindet zu allen anderen Nebenstellen
+          voice: DUAKkudcC2PI6KEqJ60K           # „Lord der Unterwelt“ (ElevenLabs Haunting-Hector)
 
         "701":
           name: Julians Rechner
@@ -81,7 +82,15 @@ configs:
           agent: http://127.0.0.1:3403          # → Service agent-homeassistant
           password: ${EXT_703_PASSWORD}
           description: Haussteuerung – Licht, Heizung, Rollos, Temperaturen, Einkaufsliste
-          greeting: Haussteuerung, hallo! Was kann ich für dich tun?
+          voice: 8H6qI5XrorT00BcdvDlm           # „Bahnsprecher“ (ElevenLabs Railway – Vintage Station Announcement)
+          greeting: >-
+            Sehr geehrte Damen und Herren, an Gleis 1 bitte zurücktreten. Der Zug ist abgefahren.
+            Hier spricht die Haussteuerung – was kann ich für dich tun?
+          thinking_phrases:
+            - Bitte haben Sie einen Moment Geduld.
+            - Information zu Ihrer Anfrage – einen Augenblick.
+            - Verzögerung im Betriebsablauf. Einen Moment bitte.
+            - Die Weiche wird gestellt.
 
       # ── Weitere Ziele für die Vermittlung (normale Telefone etc.) ───────
       #  Werden nicht registriert, nur von 700 als Durchstell-Ziel genannt.
