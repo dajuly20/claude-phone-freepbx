@@ -323,27 +323,32 @@ class CallSession {
    * @param {number} [opts.firstSilenceMs] - after the greeting: if the caller says
    *   nothing (or nothing understandable) within this time, call opts.onFirstSilence()
    *   (once) and keep listening
+   * @param {Array} [opts.silenceHints] - further steps after that, in order:
+   *   [{ ms, run }] – still nothing after `ms` → await run(), keep listening
    * @param {Function} [opts.beforeAsk] - (transcript) => 'stop' to handle it without Claude
    * @param {Function} [opts.extraPrompt] - (transcript) => text appended to devicePrompt for this turn
    */
   async converse(apiUrl, { greeting, devicePrompt, timeout, maxTurns = 20, onResponse,
-    firstSilenceMs = 0, onFirstSilence, beforeAsk, extraPrompt, thinkingPhrases } = {}) {
+    firstSilenceMs = 0, onFirstSilence, silenceHints = [], beforeAsk, extraPrompt, thinkingPhrases } = {}) {
     if (greeting) await this.say(greeting);
+    const hints = [...(firstSilenceMs > 0 && onFirstSilence ? [{ ms: firstSilenceMs, run: onFirstSilence }] : []),
+      ...silenceHints.filter(h => h && h.ms > 0 && h.run)];
 
     let turn = 0;
     while (turn < maxTurns && this.active && !this.handedOff) {
       turn++;
       log('CONVERSATION Turn ' + turn + '/' + maxTurns + ' (' + apiUrl + ')');
 
-      const firstTry = turn === 1 && firstSilenceMs > 0 && onFirstSilence;
-      const transcript = await this.listen(firstTry ? { noSpeechMs: firstSilenceMs } : {});
+      const hint = turn === 1 && hints.length ? hints[0] : null;
+      const transcript = await this.listen(hint ? { noSpeechMs: hint.ms } : {});
       if (!this.active || this.handedOff) break;
-      if (!transcript && firstTry) {
-        await onFirstSilence();
+      if (!transcript && hint) {
+        hints.shift();
+        await hint.run();
         turn--; // the hint does not count as a turn
-        firstSilenceMs = 0;
         continue;
       }
+      hints.length = 0; // the caller spoke – no more silence hints
       if (!transcript) {
         await this.say("Ich habe nichts verstanden. Bist du noch da?");
         continue;

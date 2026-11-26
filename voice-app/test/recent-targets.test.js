@@ -80,3 +80,20 @@ test('converse: beforeAsk stops, first silence/unclear plays hint once, handedOf
   call.listen = async () => { throw new Error('loop should not run'); };
   await call.converse('x', {});
 });
+
+test('converse: silence hints run in order, stop once the caller speaks', async () => {
+  const { CallSession } = require('../lib/call-session');
+  const call = new CallSession({ endpoint: { on() {} }, dialog: { on() {} }, callUuid: 'c2', options: {}, device: {} });
+  call.say = async () => {};
+  const waits = [];
+  const answers = [null, null, 'Hauptmenü'];
+  call.listen = async (o) => { waits.push(o.noSpeechMs || 0); return answers.shift(); };
+  const ran = [];
+  await call.converse('x', {
+    firstSilenceMs: 5000, onFirstSilence: async () => { ran.push('menu'); },
+    silenceHints: [{ ms: 10000, run: async () => { ran.push('reveal'); } }],
+    beforeAsk: async () => 'stop'
+  });
+  assert.deepStrictEqual(ran, ['menu', 'reveal']);
+  assert.deepStrictEqual(waits, [5000, 10000, 0]);
+});

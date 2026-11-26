@@ -26,13 +26,13 @@ test('greeting: personal with device/place, shared phone by place, fallback by e
   assert.strictEqual(julian.owner, true);
   assert.match(julian.line, /Nebenstelle 502 – Julian, Gerät: Snom, Ort: Julians Zimmer/);
   assert.match(operatorGreeting(julian),
-    /Ewigkeit\. Hallo Julian, du rufst vom Snom an – Julians Zimmer, Schreibtisch links\. Wen soll ich stöpseln/);
+    /Vermittlung\. Hallo Julian, du rufst vom Snom an – Julians Zimmer, Schreibtisch links\. Wen soll ich stöpseln/);
 
   const wz = identifyCaller('500', { ext: '500', person: '', name: '', geraet: '', ort: 'Wohnzimmer' });
   assert.strictEqual(wz.owner, false);
-  assert.match(operatorGreeting(wz), /Ewigkeit\. Hallo, du rufst vom Wohnzimmer an\. Wen soll ich/);
+  assert.match(operatorGreeting(wz), /Vermittlung\. Hallo, du rufst vom Wohnzimmer an\. Wen soll ich/);
 
-  assert.match(operatorGreeting({ name: '', extension: '402' }), /Ewigkeit\. Hallo, du rufst von Nebenstelle 4 0 2 an\./);
+  assert.match(operatorGreeting({ name: '', extension: '402' }), /Vermittlung\. Hallo, du rufst von Nebenstelle 4 0 2 an\./);
   assert.strictEqual(spokenDigits('*1'), 'Stern 1');
 });
 

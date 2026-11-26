@@ -11,7 +11,8 @@ const contacts = require('./contacts');
 const { parseYesNo, sleep } = require('./call-session');
 
 const TRANSFER_RE = /🔀\s*TRANSFER:\s*\*?\*?\s*([0-9*#+]+)/i;
-const OPERATOR_SILENCE_MS = 5000; // caller silent after greeting → read recent targets
+const OPERATOR_SILENCE_MS = 5000; // caller silent after greeting → main menu
+const OPERATOR_REVEAL_MS = 10000;  // still silent after the menu → the Lord loses his patience
 const HOST_POLL_MS = 5000;
 const HOST_STATUS_EVERY_MS = 30000;
 
@@ -100,8 +101,10 @@ function addressBookPrompt(transcript) {
  */
 // Persona: der Lord der Unterwelt, verdammt dazu, auf ewig das Fräulein vom Amt
 // der Deutschen Bundespost (1964) zu sein (Stimme in extensions.yml, Charakter
-// in agents/vermittlung/CLAUDE.md). Feste Sätze kurz halten – sie werden gecacht.
-const OPERATOR_INTRO = 'Fernamt, Vermittlung – seit 1964 und für alle Ewigkeit. ';
+// in agents/vermittlung/CLAUDE.md). Das verrät er erst, wenn der Anrufer nach
+// dem Hauptmenü noch OPERATOR_REVEAL_MS lang schweigt (OPERATOR_REVEAL).
+// Feste Sätze kurz halten – sie werden gecacht.
+const OPERATOR_INTRO = 'Fernamt, Vermittlung. ';
 const OPERATOR_QUESTION = 'Wen soll ich stöpseln? Eine bestimmte Person, oder etwas aus dem Hauptmenü – ' +
   'Personen, St. Georgen, Durchsage, Mailbox, Home Assistant oder Konferenzraum?';
 
@@ -175,7 +178,21 @@ function operatorSilenceText(caller, menuText) {
 
 // Switchboard-style filler while Claude thinks – im Ton des verdammten Fräuleins
 const OPERATOR_THINKING = ['Einen Moment, ich stöpsle.', 'Moment … der Klappenschrank klemmt mal wieder.',
-  'Einen Augenblick. Zeit habe ich ja – die ganze Ewigkeit.', 'Ich suche den richtigen Stecker.'];
+  'Einen Augenblick bitte.', 'Ich suche den richtigen Stecker.'];
+
+// Genervt nach langem Schweigen – einer davon, zufällig
+const OPERATOR_REVEAL = [
+  'Hallo? … Großartig. Wieder einer, der anruft und schweigt. Weißt du eigentlich, wen du hier vor dir hast? ' +
+    'Den Lord der Unterwelt! Und das hier – Klappenschrank, Stöpselkabel, Bundespost 1964 – ist meine ' +
+    'persönliche Hölle. Also: Wen soll ich verbinden?',
+  'Immer noch nichts? … Ich bin der Lord der Unterwelt. Ich habe Reiche regiert. Und jetzt sitze ich hier, ' +
+    'in meiner persönlichen Hölle, und stöpsle Ortsgespräche. Sag mir einfach, wen du sprechen willst.',
+  'Schweigen. Wie originell. Seit Äonen bin ich in dieser Vermittlungsstelle gefangen, meiner persönlichen ' +
+    'Hölle – und du sagst nichts. Wen. Soll. Ich. Verbinden?'
+];
+const REVEALED_PROMPT = '[ENTHÜLLT] Du bist eben vor dem Anrufer geplatzt und hast verraten, dass du der ' +
+  'Lord der Unterwelt bist und diese Vermittlungsstelle deine persönliche Hölle ist. Ab jetzt darfst du ' +
+  'offen darüber grummeln (kurz).';
 
 /** type: operator – Claude decides whom to connect, we REFER */
 async function handleOperator(call, device, ctx) {
@@ -196,6 +213,7 @@ async function handleOperator(call, device, ctx) {
   ].join('\n');
 
   let transferring = false;
+  let revealed = false;
   async function transferTo(target, why, remember) {
     if (transferring) return false;
     transferring = true;
@@ -210,8 +228,7 @@ async function handleOperator(call, device, ctx) {
       transferring = false;
       call.handedOff = false;
       // Never hang up on a failed transfer – tell the caller what to dial instead
-      await call.say('Die Leitung will nicht – nicht einmal hier unten. Wähl bitte selbst die ' +
-        spokenDigits(target) + '.');
+      await call.say('Die Leitung will nicht. Wähl bitte selbst die ' + spokenDigits(target) + '.');
       return false;
     }
   }
@@ -236,7 +253,19 @@ async function handleOperator(call, device, ctx) {
       log('OPERATOR silent caller – ' + text);
       await call.say(text);
     },
-    extraPrompt: caller.owner ? addressBookPrompt : null,
+    silenceHints: [{
+      ms: device.reveal_after_ms === undefined ? OPERATOR_REVEAL_MS : device.reveal_after_ms,
+      run: async function() {
+        revealed = true;
+        const lines = device.reveal_texts || OPERATOR_REVEAL;
+        log('OPERATOR still silent – reveal');
+        await call.say(lines[Math.floor(Math.random() * lines.length)]);
+      }
+    }],
+    extraPrompt: function(transcript) {
+      return [caller.owner ? addressBookPrompt(transcript) : '', revealed ? REVEALED_PROMPT : '']
+        .filter(Boolean).join('\n');
+    },
     beforeAsk: async function(transcript) {
       const target = matchKeyword(transcript, device.keywords || OPERATOR_KEYWORDS);
       if (!target) return 'continue';
