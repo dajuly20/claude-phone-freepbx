@@ -1,6 +1,12 @@
 /**
- * ElevenLabs Text-to-Speech Service
- * Generates speech audio files and returns URLs for FreeSWITCH playback
+ * Text-to-Speech Service
+ * Generates speech audio files and returns URLs for FreeSWITCH playback.
+ *
+ * ElevenLabs first; if that fails (quota used up, key invalid, outage) the
+ * same text goes to Home Assistant TTS (default tts.home_assistant_cloud).
+ * After a quota/auth error ElevenLabs is skipped for TTS_ELEVENLABS_PAUSE_MIN
+ * minutes (default 30) so calls don't wait for a request that will fail.
+ *   TTS_FALLBACK=homeassistant|none   HA_TTS_ENGINE, HA_TTS_LANGUAGE, HA_TTS_VOICE
  */
 
 const axios = require('axios');
@@ -51,7 +57,62 @@ function generateFilename(text) {
  * @param {string} voiceId - ElevenLabs voice ID (optional)
  * @returns {Promise<string>} HTTP URL to audio file
  */
+const PAUSE_MS = (Number(process.env.TTS_ELEVENLABS_PAUSE_MIN) || 30) * 60000;
+let elevenLabsPausedUntil = 0;
+
+function saveAudio(text, data) {
+  const filename = generateFilename(text);
+  fs.writeFileSync(path.join(audioDir, filename), data);
+  return `http://127.0.0.1:3000/audio-files/${filename}`;
+}
+
+/** Home Assistant TTS: POST /api/tts_get_url, then fetch the MP3 */
+async function generateSpeechHA(text) {
+  const { HA_URL, HA_TOKEN } = process.env;
+  if (!HA_URL || !HA_TOKEN) throw new Error('HA_URL/HA_TOKEN not configured');
+  const base = HA_URL.replace(/\/$/, '');
+  const headers = { Authorization: 'Bearer ' + HA_TOKEN };
+  const startTime = Date.now();
+  const body = {
+    engine_id: process.env.HA_TTS_ENGINE || 'tts.home_assistant_cloud',
+    message: text,
+    language: process.env.HA_TTS_LANGUAGE || 'de-DE'
+  };
+  if (process.env.HA_TTS_VOICE) body.options = { voice: process.env.HA_TTS_VOICE };
+  const res = await axios.post(base + '/api/tts_get_url', body, { headers, timeout: 15000 });
+  const audio = await axios.get(base + res.data.path, { headers, timeout: 15000, responseType: 'arraybuffer' });
+  const url = saveAudio(text, audio.data);
+  logger.info('Speech generation successful (Home Assistant)', {
+    engine: body.engine_id, latency: Date.now() - startTime, textLength: text.length
+  });
+  return url;
+}
+
+/**
+ * Speech for `text`: ElevenLabs, falling back to Home Assistant TTS
+ * @returns {Promise<string>} HTTP URL to audio file
+ */
 async function generateSpeech(text, voiceId = DEFAULT_VOICE_ID) {
+  const fallback = (process.env.TTS_FALLBACK || 'homeassistant') !== 'none';
+  if (fallback && Date.now() < elevenLabsPausedUntil) return generateSpeechHA(text);
+  try {
+    return await generateSpeechElevenLabs(text, voiceId);
+  } catch (err) {
+    if (!fallback) throw err;
+    if (err.pauseElevenLabs) {
+      elevenLabsPausedUntil = Date.now() + PAUSE_MS;
+      logger.warn('ElevenLabs paused, using Home Assistant TTS', { minutes: PAUSE_MS / 60000, reason: err.message });
+    }
+    try {
+      return await generateSpeechHA(text);
+    } catch (haErr) {
+      logger.error('Home Assistant TTS failed too', { error: haErr.message });
+      throw err;
+    }
+  }
+}
+
+async function generateSpeechElevenLabs(text, voiceId = DEFAULT_VOICE_ID) {
   const startTime = Date.now();
 
   try {
@@ -87,26 +148,16 @@ async function generateSpeech(text, voiceId = DEFAULT_VOICE_ID) {
       responseType: 'arraybuffer'
     });
 
-    // Generate filename and save audio
-    const filename = generateFilename(text);
-    const filepath = path.join(audioDir, filename);
-
-    fs.writeFileSync(filepath, response.data);
+    const audioUrl = saveAudio(text, response.data);
 
     const latency = Date.now() - startTime;
     const fileSize = response.data.length;
 
     logger.info('Speech generation successful', {
-      filename,
       fileSize,
       latency,
       textLength: text.length
     });
-
-    // Return HTTP URL (assumes audio-temp is served via HTTP)
-    // Format: http://localhost:PORT/audio/filename.mp3
-    // The HTTP server setup is handled elsewhere
-    const audioUrl = `http://127.0.0.1:3000/audio-files/${filename}`;
 
     return audioUrl;
 
@@ -122,9 +173,15 @@ async function generateSpeech(text, voiceId = DEFAULT_VOICE_ID) {
     });
 
     // Handle specific errors
-    if (error.response?.status === 401) {
-      throw new Error('ElevenLabs API authentication failed - check API key');
-    } else if (error.response?.status === 429) {
+    const status = error.response?.status;
+    if (!ELEVENLABS_API_KEY || status === 401 || status === 402 ||
+        /quota/i.test(String(error.response?.data || ''))) {
+      const e = new Error(!ELEVENLABS_API_KEY ? 'ElevenLabs API key missing'
+        : /quota/i.test(String(error.response?.data || '')) ? 'ElevenLabs quota exceeded'
+          : 'ElevenLabs API authentication failed - check API key');
+      e.pauseElevenLabs = true;
+      throw e;
+    } else if (status === 429) {
       throw new Error('ElevenLabs API rate limit exceeded');
     } else if (error.response?.status === 400) {
       throw new Error('Invalid request to ElevenLabs API');
@@ -200,10 +257,14 @@ setAudioDir(audioDir);
 // Setup periodic cleanup (every 30 minutes)
 setInterval(() => {
   cleanupOldFiles();
-}, 30 * 60 * 1000);
+}, 30 * 60 * 1000).unref();
+
+function _resetPause() { elevenLabsPausedUntil = 0; }
 
 module.exports = {
   generateSpeech,
+  generateSpeechHA,
+  _resetPause,
   setAudioDir,
   cleanupOldFiles,
   getAvailableVoices
